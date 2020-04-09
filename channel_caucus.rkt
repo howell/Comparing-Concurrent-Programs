@@ -89,8 +89,9 @@
               [(eligible-candidates candidate-structs) (loop (map candidate-name (rank-candidates candidate-structs)) voter-registry)]
               [(vote-request cand-names round-id)
                (define voting-for 
-                 (for/first ([candidate (in-list candidates)])
-                            #:when (member candidate candidates)))
+                 (for/first ([candidate (in-list candidates)]
+                            #:when (member candidate candidates))
+                            candidate))
                (channel-put voter-registry (vote round-id voting-for))
                (loop candidates voter-registry)]))))))
   (cons (voter name) voter-channel))
@@ -110,7 +111,7 @@
                  [voters '()]
                  [leader-state 'idle])
         (match leader-state
-          [('idle)
+          ['idle
             (when (and (>= (length candidates) 0) (>= (length voters) 0)) (loop candidates voters 'started))
            (sync-wrapper
              leader-channel
@@ -121,7 +122,7 @@
                [(all-voters voter-structs)
                 (printf "we got voters! ~a\n" voter-structs)
                 (loop candidates voter-structs leader-state)]))]
-          [('started)
+          ['started
            (define round-id (gensym 'round))
            (channel-put (round round-id candidates leader-channel))
            (sync-wrapper
@@ -142,7 +143,7 @@
                    (define loser (argmin (λ (n) (hash-ref tallies n 0)) candidates))
                    (define next-candidates (remove loser candidates))
                    (loop (next-candidates voters 'started))])]))]
-          [('finished) #f]))))
+          ['finished #f]))))
   leader-channel)
 
 (define (sync-wrapper channel func)
