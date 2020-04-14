@@ -1,8 +1,6 @@
 #lang racket
 (require racket/set)
 
-;; start by adding candidates and a leader who is able to consume candidate announcements
-
 ;; a Name is a string
 
 ;; a Tax-Rate is a number
@@ -15,12 +13,27 @@
 ;; a subscribe is a (subscribe Chan)
 (struct subscribe (chan) #:transparent)
 
+;; TODO an all-candidates message
+
+;;;; ENTITIES ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; 1. Candidates
+;; 2. Candidate Registry
+
+;;;; CONVERSATIONS ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; PUBLISH CONVERSATIONS
+;; 1. Candidates announce themselves to the Candidate Registry
+;;
+;;
+;;
+;; SUBSCRIBE CONVERSATIONS
+;; 1. Subscribers to the Candidate Registry will:
+;;    a. Immediately receive a message with all known candidates
+;;    b. Will be sent an Up-To-Date list of Candidates if that list changes
+;; 
+
 ;; there is a presence-oriented conversation where candidates declare themselves
 ;; to their local candidate registry, so that they can be voted for.
 
-;; ENTITIES:
-;; 1. Candidates
-;; 2. Candidate Registry
 
 ;; a candidate registry holds two conversations:
 ;; 1. if a candidate registers, then an update is sent to all existing subscribers
