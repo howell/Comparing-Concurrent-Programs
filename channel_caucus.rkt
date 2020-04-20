@@ -1,6 +1,14 @@
 #lang racket
 (require racket/set)
 
+
+;; ???
+
+(define caucus-log (make-logger 'caucus (current-logger)))
+
+(define (log-caucus-evt evt . vals)
+  (log-message caucus-log 'info (logger-name caucus-log) (apply format evt vals)))
+
 ;; TODO need to do timeout management of voters both here and in syndicate version
 
 ;; a Name is a string
@@ -61,8 +69,10 @@
 ;; Create the Candidate Registry thread and channel
 (define (make-candidate-registry)
   (define registration-chan (make-channel))
+  (define receive-roll-chan (make-channel))
   (thread
     (thunk
+      (log-caucus-evt "The candidate registry is open for business!")
       (let loop ([candidates (set)]
                  [subscribers (set)])
         (sync
@@ -74,18 +84,22 @@
                (define new-candidates (set-add candidates (candidate name tax-rate)))
                (for ([subscriber (set->list subscribers)])
                  (channel-put subscriber (all-candidates new-candidates)))
-               (loop new-candidates subscribers)]
+               (loop new-candidates subscribers)]))
+          (handle-evt
+            receive-roll-chan
+            (match-lambda
               ;; a channel has requested to be a Subscriber!
               [(subscribe chan)
                (channel-put chan (all-candidates candidates))
                (loop candidates (set-add subscribers chan))]))))))
-  registration-chan)
+  (values registration-chan receive-roll-chan))
 
 ;; Create a Candidate thread
 ;; Name Tax-Rate Candidate-Registry -> void
 (define (make-candidate name tax-rate registration-chan)
   (thread 
     (thunk
+      (log-caucus-evt "Candidate ~a has entered the race!" name)
       (channel-put registration-chan (candidate name tax-rate)))))
 
 ;; Create the Voter Registry thread and channel
@@ -93,13 +107,16 @@
   (define registration-chan (make-channel))
   (thread
     (thunk
+      (log-caucus-evt "The Voter Registry has opened for business!")
       (let loop ([voters (set)])
         (sync
           (handle-evt
             registration-chan
             (match-lambda
               ;; A Voter has registered!
-              [(voter name voter-chan) (loop (set-add voters (voter name voter-chan)))]
+              [(voter name voter-chan) 
+               (log-caucus-evt "Voter ~a has successfully registered!" name)
+               (loop (set-add voters (voter name voter-chan)))]
               ;; A request for voter data has been received!
               [(request-msg recv-chan) 
                (channel-put recv-chan (all-voters voters))
@@ -111,6 +128,7 @@
   (define voter-chan (make-channel))
   (thread
     (thunk
+      (log-caucus-evt "Voter ~a is registering!" name)
       (channel-put candidate-registry (subscribe voter-chan))
       (channel-put voter-registry (voter name voter-chan))
       (let loop ([candidates (set)]) ;; candidates just gets 're-assigned' by calling loop with a different argument, this is just to clarify type
@@ -137,12 +155,14 @@
     (thunk
       (sleep 1) ;; to make sure all other actors get situated first
       ;; TODO How are you going to deal with candidates leaving in the middle of voting?
+      (log-caucus-evt "The Vote Leader is ready to run the caucus!")
       (channel-put candidate-registry (subscribe leader-chan))
       ;; DECISION: once you're subscribed to candidates, begin voting phase
 
       ;; Start a sequence of votes to determine an elected candidate
       ;; (Setof Candidate) -> Candidate
       (define (run-caucus candidates)
+        (log-caucus-evt "The Vote Leader is beginning a new round of voting!")
         (define STATES '(SETUP VOTING))
         (let loop ([curr-state 'SETUP]
                    [voters (set)]) ;; this is just to demonstrate the type
@@ -172,16 +192,21 @@
               leader-chan
               (match-lambda
                 [(vote name candidate)
+                 (log-caucus-evt "Voter ~a has voted for Candidate ~a!" name candidate)
                  (define new-votes (hash-update votes candidate add1 0))
                  (define num-votes (for/sum ([votes-for-cand (in-hash-values new-votes)]) votes-for-cand))
                  (cond
                    [(= num-votes (set-count voters))
+                    (log-caucus-evt "Round of voting has ended! Time to tally the votes!")
                     (define front-runner (argmax (λ (cand) (hash-ref new-votes (candidate-name cand) 0)) (set->list candidates)))
                     (define their-votes (hash-ref new-votes (candidate-name front-runner) 0))
                     (cond
-                      [(> their-votes (/ num-votes 2)) front-runner]
+                      [(> their-votes (/ num-votes 2)) 
+                       (log-caucus-evt "Candidate ~a has been elected!" (candidate-name front-runner))
+                       front-runner]
                       [else
                         (define loser (argmin (λ (cand) (hash-ref new-votes (candidate-name cand) 0)) (set->list candidates)))
+                        (log-caucus-evt "Candidate ~a has been eliminated from the race!" (candidate-name loser))
                         (define next-candidates (set-remove candidates loser))
                         (run-caucus next-candidates)])]
                    [else (voting-loop new-votes)])])))))
@@ -228,31 +253,30 @@
 
 ;;;;;;;;;;;; EXECUTION ;;;;;;;;;;;;
 
-(define candidate-registry (make-candidate-registry))
+(define-values (candidate-registration candidate-roll) (make-candidate-registry))
+(printf "~a\n" candidate-registration)
+(printf "~a\n" candidate-roll)
 
-(make-candidate "Bernie" 50 candidate-registry)
-(make-candidate "Biden" 25 candidate-registry)
-(make-candidate "Tulsi" 6 candidate-registry)
+(make-candidate "Bernie" 50 candidate-registration)
+(make-candidate "Biden" 25 candidate-registration)
+(make-candidate "Tulsi" 6 candidate-registration)
 
 (define voter-registry (make-voter-registry))
 
-(make-voter "ABC" (stupid-sort "Bernie") voter-registry candidate-registry)
-(make-voter "DEF" (stupid-sort "Bernie") voter-registry candidate-registry)
-(make-voter "GHI" (stupid-sort "Bernie") voter-registry candidate-registry)
-(make-voter "JKL" (stupid-sort "Biden") voter-registry candidate-registry)
-(make-voter "MNO" (stupid-sort "Biden") voter-registry candidate-registry)
-(make-voter "PQR" (stupid-sort "Biden") voter-registry candidate-registry)
-(make-voter "STU" (stupid-sort "Biden") voter-registry candidate-registry)
-(make-voter "VWX" (stupid-sort "Biden") voter-registry candidate-registry)
-(make-voter "YZZ" (stupid-sort "Biden") voter-registry candidate-registry)
-;; (make-voter "CBA" (stupid-sort "Biden") voter-registry candidate-registry)
-;; (make-voter "CAB" (stupid-sort "Biden") voter-registry candidate-registry)
-(make-voter "111" (stupid-sort "Tulsi") voter-registry candidate-registry)
-(make-voter "222" (stupid-sort "Tulsi") voter-registry candidate-registry)
-(make-voter "333" (stupid-sort "Tulsi") voter-registry candidate-registry)
-(make-voter "444" (stupid-sort "Tulsi") voter-registry candidate-registry)
+(make-voter "ABC" (stupid-sort "Bernie") voter-registry candidate-roll)
+(make-voter "DEF" (stupid-sort "Bernie") voter-registry candidate-roll)
+(make-voter "GHI" (stupid-sort "Bernie") voter-registry candidate-roll)
+(make-voter "JKL" (stupid-sort "Biden") voter-registry candidate-roll)
+(make-voter "MNO" (stupid-sort "Biden") voter-registry candidate-roll)
+(make-voter "PQR" (stupid-sort "Biden") voter-registry candidate-roll)
+(make-voter "STU" (stupid-sort "Biden") voter-registry candidate-roll)
+(make-voter "VWX" (stupid-sort "Biden") voter-registry candidate-roll)
+(make-voter "YZZ" (stupid-sort "Biden") voter-registry candidate-roll)
+;; (make-voter "CBA" (stupid-sort "Biden") voter-registry candidate-roll)
+;; (make-voter "CAB" (stupid-sort "Biden") voter-registry candidate-roll)
+(make-voter "111" (stupid-sort "Tulsi") voter-registry candidate-roll)
+(make-voter "222" (stupid-sort "Tulsi") voter-registry candidate-roll)
+(make-voter "333" (stupid-sort "Tulsi") voter-registry candidate-roll)
+(make-voter "444" (stupid-sort "Tulsi") voter-registry candidate-roll)
 
-(make-vote-leader candidate-registry voter-registry)
-
-(sleep 10)
-
+(thread-wait (make-vote-leader candidate-roll voter-registry))
