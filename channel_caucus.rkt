@@ -105,6 +105,7 @@
 ;; Create the Voter Registry thread and channel
 (define (make-voter-registry)
   (define registration-chan (make-channel))
+  (define receive-roll-chan (make-channel))
   (thread
     (thunk
       (log-caucus-evt "The Voter Registry has opened for business!")
@@ -116,28 +117,35 @@
               ;; A Voter has registered!
               [(voter name voter-chan) 
                (log-caucus-evt "Voter ~a has successfully registered!" name)
-               (loop (set-add voters (voter name voter-chan)))]
+               (loop (set-add voters (voter name voter-chan)))]))
+          (handle-evt
+            receive-roll-chan
+            (match-lambda
               ;; A request for voter data has been received!
               [(request-msg recv-chan) 
                (channel-put recv-chan (all-voters voters))
                (loop voters)]))))))
-  registration-chan)
+  (values registration-chan receive-roll-chan))
 
 ;; Make a Voter thread
 (define (make-voter name rank-candidates voter-registry candidate-registry)
-  (define voter-chan (make-channel))
+  (define receive-candidates-chan (make-channel))
+  (define voting-chan (make-channel))
   (thread
     (thunk
       (log-caucus-evt "Voter ~a is registering!" name)
-      (channel-put candidate-registry (subscribe voter-chan))
-      (channel-put voter-registry (voter name voter-chan))
+      (channel-put candidate-registry (subscribe receive-candidates-chan))
+      (channel-put voter-registry (voter name voting-chan))
       (let loop ([candidates (set)]) ;; candidates just gets 're-assigned' by calling loop with a different argument, this is just to clarify type
         (sync
           (handle-evt
-            voter-chan
+            receive-candidates-chan
             (match-lambda
               ;; A response from the Candidate Registry has been received!
-              [(all-candidates curr-candidates) (loop curr-candidates)]
+              [(all-candidates curr-candidates) (loop curr-candidates)]))
+          (handle-evt
+            voting-chan
+            (match-lambda
               ;; A request to vote has been received from the Vote Leader!
               [(request-vote available-candidates leader-chan)
                (define priorities (rank-candidates (set->list candidates)))
@@ -254,29 +262,26 @@
 ;;;;;;;;;;;; EXECUTION ;;;;;;;;;;;;
 
 (define-values (candidate-registration candidate-roll) (make-candidate-registry))
-(printf "~a\n" candidate-registration)
-(printf "~a\n" candidate-roll)
+(define-values (voter-registration voter-roll) (make-voter-registry))
 
 (make-candidate "Bernie" 50 candidate-registration)
 (make-candidate "Biden" 25 candidate-registration)
 (make-candidate "Tulsi" 6 candidate-registration)
 
-(define voter-registry (make-voter-registry))
+(make-voter "ABC" (stupid-sort "Bernie") voter-registration candidate-roll)
+(make-voter "DEF" (stupid-sort "Bernie") voter-registration candidate-roll)
+(make-voter "GHI" (stupid-sort "Bernie") voter-registration candidate-roll)
+(make-voter "JKL" (stupid-sort "Biden") voter-registration candidate-roll)
+(make-voter "MNO" (stupid-sort "Biden") voter-registration candidate-roll)
+(make-voter "PQR" (stupid-sort "Biden") voter-registration candidate-roll)
+(make-voter "STU" (stupid-sort "Biden") voter-registration candidate-roll)
+(make-voter "VWX" (stupid-sort "Biden") voter-registration candidate-roll)
+(make-voter "YZZ" (stupid-sort "Biden") voter-registration candidate-roll)
+;; (make-voter "CBA" (stupid-sort "Biden") voter-registration candidate-roll)
+;; (make-voter "CAB" (stupid-sort "Biden") voter-registration candidate-roll)
+(make-voter "111" (stupid-sort "Tulsi") voter-registration candidate-roll)
+(make-voter "222" (stupid-sort "Tulsi") voter-registration candidate-roll)
+(make-voter "333" (stupid-sort "Tulsi") voter-registration candidate-roll)
+(make-voter "444" (stupid-sort "Tulsi") voter-registration candidate-roll)
 
-(make-voter "ABC" (stupid-sort "Bernie") voter-registry candidate-roll)
-(make-voter "DEF" (stupid-sort "Bernie") voter-registry candidate-roll)
-(make-voter "GHI" (stupid-sort "Bernie") voter-registry candidate-roll)
-(make-voter "JKL" (stupid-sort "Biden") voter-registry candidate-roll)
-(make-voter "MNO" (stupid-sort "Biden") voter-registry candidate-roll)
-(make-voter "PQR" (stupid-sort "Biden") voter-registry candidate-roll)
-(make-voter "STU" (stupid-sort "Biden") voter-registry candidate-roll)
-(make-voter "VWX" (stupid-sort "Biden") voter-registry candidate-roll)
-(make-voter "YZZ" (stupid-sort "Biden") voter-registry candidate-roll)
-;; (make-voter "CBA" (stupid-sort "Biden") voter-registry candidate-roll)
-;; (make-voter "CAB" (stupid-sort "Biden") voter-registry candidate-roll)
-(make-voter "111" (stupid-sort "Tulsi") voter-registry candidate-roll)
-(make-voter "222" (stupid-sort "Tulsi") voter-registry candidate-roll)
-(make-voter "333" (stupid-sort "Tulsi") voter-registry candidate-roll)
-(make-voter "444" (stupid-sort "Tulsi") voter-registry candidate-roll)
-
-(thread-wait (make-vote-leader candidate-roll voter-registry))
+(thread-wait (make-vote-leader candidate-roll voter-roll))
