@@ -158,13 +158,15 @@
 
 ;; Make the Vote Leader thread
 (define (make-vote-leader candidate-registry voter-registry)
-  (define leader-chan (make-channel))
+  (define retrieve-candidates-chan (make-channel))
+  (define retrieve-voters-chan (make-channel))
+  (define voting-chan (make-channel))
   (thread
     (thunk
       (sleep 1) ;; to make sure all other actors get situated first
       ;; TODO How are you going to deal with candidates leaving in the middle of voting?
       (log-caucus-evt "The Vote Leader is ready to run the caucus!")
-      (channel-put candidate-registry (subscribe leader-chan))
+      (channel-put candidate-registry (subscribe retrieve-candidates-chan))
       ;; DECISION: once you're subscribed to candidates, begin voting phase
 
       ;; Start a sequence of votes to determine an elected candidate
@@ -176,10 +178,10 @@
                    [voters (set)]) ;; this is just to demonstrate the type
           (match curr-state
             ['SETUP
-             (channel-put voter-registry (request-msg leader-chan))
+             (channel-put voter-registry (request-msg retrieve-voters-chan))
              (sync
                (handle-evt
-                 leader-chan
+                 retrieve-voters-chan
                  (match-lambda
                    [(all-voters new-voters) (loop 'VOTING new-voters)])))]
             ['VOTING
@@ -188,7 +190,7 @@
                (channel-put (voter-voting-chan voter) 
                             (request-vote 
                               (map (λ (cand) (candidate-name cand)) (set->list candidates)) 
-                              leader-chan)))
+                              voting-chan)))
              (collect-votes voters candidates)])))
 
       ;; Determine winner of a round of voting or eliminate a candidate and move to the next one
@@ -197,7 +199,7 @@
         (let voting-loop ([votes (hash)])
           (sync
             (handle-evt
-              leader-chan
+              voting-chan
               (match-lambda
                 [(vote name candidate)
                  (log-caucus-evt "Voter ~a has voted for Candidate ~a!" name candidate)
@@ -221,7 +223,7 @@
         
       (sync
         (handle-evt
-          leader-chan
+          retrieve-candidates-chan
           (match-lambda
             [(all-candidates new-candidates)
              (define winner (run-caucus new-candidates))
