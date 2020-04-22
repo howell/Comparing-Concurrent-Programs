@@ -1,9 +1,6 @@
 #lang racket
 (require racket/set)
 
-
-;; ???
-
 (define caucus-log (make-logger 'caucus (current-logger)))
 
 (define (log-caucus-evt evt . vals)
@@ -15,10 +12,15 @@
 
 ;; a Tax-Rate is a number
 
+;; a Threshold is a number
+
 ;; a Chan is a channel
 
-;; a Candidate is a (candidate Name Tax-Rate)
-(struct candidate (name tax-rate) #:transparent)
+;; a Candidate is a (candidate Name Tax-Rate Chan)
+(struct candidate (name tax-rate results-chan) #:transparent)
+
+;; a DropOut is a (drop-out Name)
+(struct drop-out (name) #:transparent)
 
 ;; a Voter is a (voter Name Chan)
 (struct voter (name voting-chan) #:transparent)
@@ -41,12 +43,24 @@
 ;; an All-Voters is a (all-voters [Setof Voter])
 (struct all-voters (voters) #:transparent)
 
+;;;; ASSUMPTIONS ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; 1. Candidates don't leave/exit the race, they just sit and do nothing
+;;     a. Candidates also don't try to re-insert themselves after dropping out
+;; 2. Voters don't try voting for multiple candidates
+;; 3. Voters never try voting for candidates that are no longer available for voting
+;; 4. Voters never leave early (with an announcement)
+;; 5. Voters never leave early (without an announcement)
+;; 6. Voters never try joining late (how is this even expressible...?)
+;; 7. Voters never try to vote if they haven't registered (also not expressible...?)
+;; 
+
 ;;;; ENTITIES ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1. Candidates        
 ;; 2. Candidate Registry
 ;; 3. Voters            
 ;; 4. Voter Registry    
 ;; 5. Vote Leader       
+;; 
 
 ;;;; CONVERSATIONS ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Publish Conversations
@@ -73,6 +87,12 @@
   (thread
     (thunk
       (log-caucus-evt "The candidate registry is open for business!")
+
+      ;; TODO purpose statement + signature
+      (define (update-subscribers subscribers candidates)
+        (for ([subscriber (set->list subscribers)])
+          (channel-put subscriber (all-candidates candidates))))
+
       (let loop ([candidates (set)]
                  [subscribers (set)])
         (sync
@@ -82,25 +102,52 @@
               ;; a Candidate has registered!
               [(candidate name tax-rate) 
                (define new-candidates (set-add candidates (candidate name tax-rate)))
-               (for ([subscriber (set->list subscribers)])
-                 (channel-put subscriber (all-candidates new-candidates)))
-               (loop new-candidates subscribers)]))
+               (update-subscribers subscribers new-candidates)
+               (loop new-candidates subscribers)]
+              ;; a Candidate has dropped out!
+              [(drop-out name)
+               (define cand (for/first ([cand-struct (set->list candidates)]
+                                       #:when (= name (candidate-name cand-struct)))
+                                       cand-struct))
+               (define new-candidates (set-remove candidates cand-struct))
+               (update-subscribers subscribers new-candidates)]))
+
           (handle-evt
             receive-roll-chan
             (match-lambda
               ;; a channel has requested to be a Subscriber!
               [(subscribe chan)
                (channel-put chan (all-candidates candidates))
-               (loop candidates (set-add subscribers chan))]))))))
+               (loop candidates (set-add subscribers chan))]
+              ;; a channel has requested a snapshot of the current Candidates!
+              [(request-msg chan)
+               (channel-put chan (all-candidates candidates))
+               (loop candidates subscribers)]))))))
   (values registration-chan receive-roll-chan))
 
 ;; Create a Candidate thread
 ;; Name Tax-Rate Candidate-Registry -> void
-(define (make-candidate name tax-rate registration-chan)
+(define (make-candidate name tax-rate threshold registration-chan)
+  (define results-chan (make-channel))
   (thread 
     (thunk
       (log-caucus-evt "Candidate ~a has entered the race!" name)
-      (channel-put registration-chan (candidate name tax-rate)))))
+      (channel-put registration-chan (candidate name tax-rate results-chan))
+      (let loop ()
+        (define votes (channel-get results-chan))
+        (cond 
+          [(< (hash-ref votes name 0) threshold)
+          (channel-put registration-chan (drop-out name))
+          (kill-thread (current-thread))] ;; should I kill the thread? Also, should I print something? (yes)
+          [else (loop)])))))
+
+;; CASCADING CHANGES:
+;; 3. change vote-leader to send vote results to candidates
+;; 4. change vote-leader to send instant message to candidate-registry and voter-registry and wait until both pieces of information have arrived until proceeding
+;; 6. add the following conversations to the list of conversations:
+;;     a. vote leader communicates with candidates about # of votes
+;;     b. candidates can remove themselves from eligibility
+;;     c. there is an instance/message based conversation between the vote-leader and the candidate registry
 
 ;; Create the Voter Registry thread and channel
 (define (make-voter-registry)
