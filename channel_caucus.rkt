@@ -37,6 +37,9 @@
 ;; a Vote is a (vote Name Name)
 (struct vote (name candidate) #:transparent)
 
+;; a Tally is a (tally (Hashof Name . number))
+(struct tally (votes) #:transparent)
+
 ;; an All-Candidates is a (all-candidates [Setof Candidate])
 (struct all-candidates (candidates) #:transparent)
 
@@ -66,6 +69,8 @@
 ;; Publish Conversations
 ;; 1. Candidates publish their information to the Candidate Registry through a `candidate` struct sent to the Registry's channel
 ;; 2. Voters publish their information to the Voter Registry through a `voter` struct sent to the Registry's channel
+;; 3. Candidates can remove themselves from eligibility by sending a `drop-out` struct to the Candidate Registry
+;;     -> This occurs when the candidate receives a number of votes below the candidate's threshold for staying in the race.
 ;;
 ;; Subscribe Conversations
 ;; 1. Voters subscribe to the Candidate Registry to receive the most up-to-date list of available Candidates whenever a candidate registers.
@@ -73,12 +78,15 @@
 ;; 
 ;; Message Conversations
 ;; 1. The Vote Leader sends a `request-msg` struct to the Voter Registry to receive the most up-to-date list of current voters.
+;; 2. The Vote Leader sends a `request-msg` struct to the Candidate Registry to receive the most up-to-date list of available candidates.
 ;;
 ;; Voting Conversations
 ;; 1. The Voting Leader sends every Voter (through their `voter` struct) a request to vote through the `request-vote` struct, sending a List of valid candidate names.
 ;; 2. Voters reply by picking a name to vote for and sending the Vote Leader a `vote` struct.
 ;; 3. If one candidate has received a majority of votes, then that candidate is elected. If not, the least voted for candidate is removed, and voting begins again.
+;; 4. At the end of every round of voting, the tally of votes is sent to every Candidate.
 ;;
+
 
 ;; Create the Candidate Registry thread and channel
 (define (make-candidate-registry)
@@ -100,8 +108,8 @@
             registration-chan
             (match-lambda
               ;; a Candidate has registered!
-              [(candidate name tax-rate) 
-               (define new-candidates (set-add candidates (candidate name tax-rate)))
+              [(candidate name tax-rate results-chan) 
+               (define new-candidates (set-add candidates (candidate name tax-rate results-chan)))
                (update-subscribers subscribers new-candidates)
                (loop new-candidates subscribers)]
               ;; a Candidate has dropped out!
@@ -109,7 +117,7 @@
                (define cand (for/first ([cand-struct (set->list candidates)]
                                        #:when (= name (candidate-name cand-struct)))
                                        cand-struct))
-               (define new-candidates (set-remove candidates cand-struct))
+               (define new-candidates (set-remove candidates cand))
                (update-subscribers subscribers new-candidates)]))
 
           (handle-evt
@@ -134,20 +142,12 @@
       (log-caucus-evt "Candidate ~a has entered the race!" name)
       (channel-put registration-chan (candidate name tax-rate results-chan))
       (let loop ()
-        (define votes (channel-get results-chan))
+        (define votes (tally-votes (channel-get results-chan)))
         (cond 
           [(< (hash-ref votes name 0) threshold)
           (channel-put registration-chan (drop-out name))
           (kill-thread (current-thread))] ;; should I kill the thread? Also, should I print something? (yes)
           [else (loop)])))))
-
-;; CASCADING CHANGES:
-;; 3. change vote-leader to send vote results to candidates
-;; 4. change vote-leader to send instant message to candidate-registry and voter-registry and wait until both pieces of information have arrived until proceeding
-;; 6. add the following conversations to the list of conversations:
-;;     a. vote leader communicates with candidates about # of votes
-;;     b. candidates can remove themselves from eligibility
-;;     c. there is an instance/message based conversation between the vote-leader and the candidate registry
 
 ;; Create the Voter Registry thread and channel
 (define (make-voter-registry)
@@ -211,26 +211,41 @@
   (thread
     (thunk
       (sleep 1) ;; to make sure all other actors get situated first
-      ;; TODO How are you going to deal with candidates leaving in the middle of voting?
       (log-caucus-evt "The Vote Leader is ready to run the caucus!")
-      (channel-put candidate-registry (subscribe retrieve-candidates-chan))
       ;; DECISION: once you're subscribed to candidates, begin voting phase
 
+      ;; TODO ASSUMPTION: there are always both voters and candidates.
+
       ;; Start a sequence of votes to determine an elected candidate
-      ;; (Setof Candidate) -> Candidate
-      (define (run-caucus candidates)
+      ;; (Setof Name) -> Candidate
+      (define (run-caucus removed-candidates)
         (log-caucus-evt "The Vote Leader is beginning a new round of voting!")
+
+        (channel-put candidate-registry (request-msg retrieve-candidates-chan))
+        (channel-put voter-registry (request-msg retrieve-voters-chan))
+
         (define STATES '(SETUP VOTING))
         (let loop ([curr-state 'SETUP]
-                   [voters (set)]) ;; this is just to demonstrate the type
+                   [voters (set)]
+                   [candidates (set)]) ;; this is just to demonstrate the type
           (match curr-state
             ['SETUP
-             (channel-put voter-registry (request-msg retrieve-voters-chan))
              (sync
                (handle-evt
                  retrieve-voters-chan
                  (match-lambda
-                   [(all-voters new-voters) (loop 'VOTING new-voters)])))]
+                   [(all-voters new-voters) 
+                    (if (not (set-empty? candidates))
+                      (loop 'VOTING new-voters candidates)
+                      (loop 'SETUP new-voters candidates))]))
+               (handle-evt
+                 retrieve-candidates-chan
+                 (match-lambda
+                   [(all-candidates new-candidates)
+                    (define eligible-candidates (list->set (filter (λ (cand) (not (set-member? removed-candidates (candidate-name cand)))) (set->list new-candidates))))
+                    (if (not (set-empty? voters))
+                      (loop 'VOTING voters eligible-candidates)
+                      (loop 'SETUP voters eligible-candidates))])))]
             ['VOTING
              ;; TODO poorly formatted
              (for ([voter (set->list voters)])
@@ -238,11 +253,11 @@
                             (request-vote 
                               (map (λ (cand) (candidate-name cand)) (set->list candidates)) 
                               voting-chan)))
-             (collect-votes voters candidates)])))
+             (collect-votes voters candidates removed-candidates)])))
 
       ;; Determine winner of a round of voting or eliminate a candidate and move to the next one
       ;; (Setof Candidate) (Setof Voter) -> Candidate
-      (define (collect-votes voters candidates)
+      (define (collect-votes voters candidates removed-candidates)
         (let voting-loop ([votes (hash)])
           (sync
             (handle-evt
@@ -265,16 +280,11 @@
                         (define loser (argmin (λ (cand) (hash-ref new-votes (candidate-name cand) 0)) (set->list candidates)))
                         (log-caucus-evt "Candidate ~a has been eliminated from the race!" (candidate-name loser))
                         (define next-candidates (set-remove candidates loser))
-                        (run-caucus next-candidates)])]
+                        (run-caucus (set-add removed-candidates (candidate-name loser)))])]
                    [else (voting-loop new-votes)])])))))
         
-      (sync
-        (handle-evt
-          retrieve-candidates-chan
-          (match-lambda
-            [(all-candidates new-candidates)
-             (define winner (run-caucus new-candidates))
-             (printf "We have a winner: ~a!\n" (candidate-name winner))]))))))
+      (define winner (run-caucus (set)))
+      (printf "We have a winner: ~a!\n" (candidate-name winner)))))
 
 
 ;; A subscriber used to print information for testing
@@ -313,9 +323,9 @@
 (define-values (candidate-registration candidate-roll) (make-candidate-registry))
 (define-values (voter-registration voter-roll) (make-voter-registry))
 
-(make-candidate "Bernie" 50 candidate-registration)
-(make-candidate "Biden" 25 candidate-registration)
-(make-candidate "Tulsi" 6 candidate-registration)
+(make-candidate "Bernie" 50 0 candidate-registration)
+(make-candidate "Biden" 25 0 candidate-registration)
+(make-candidate "Tulsi" 6 0 candidate-registration)
 
 (make-voter "ABC" (stupid-sort "Bernie") voter-registration candidate-roll)
 (make-voter "DEF" (stupid-sort "Bernie") voter-registration candidate-roll)
