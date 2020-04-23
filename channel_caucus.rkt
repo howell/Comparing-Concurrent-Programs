@@ -57,6 +57,10 @@
 ;; 7. Voters never try to vote if they haven't registered (also not expressible...?)
 ;; 
 
+;;;; FEATURES ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; 1. Multiple caucuses in a region!
+;; 
+
 ;;;; ENTITIES ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1. Candidates        
 ;; 2. Candidate Registry
@@ -87,6 +91,12 @@
 ;; 4. At the end of every round of voting, the tally of votes is sent to every Candidate.
 ;;
 
+;;;; HELPERS ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; filters out all candidates that appear in the set
+;; (Listof Candidate) (Setof Candidate) -> (Listof Candidate)
+(define (filter-candidates candidates blacklist)
+  (filter (λ (cand) (not (set-member? blacklist (candidate-name cand)))) candidates))
 
 ;; Create the Candidate Registry thread and channel
 (define (make-candidate-registry)
@@ -115,10 +125,12 @@
               ;; a Candidate has dropped out!
               [(drop-out name)
                (define cand (for/first ([cand-struct (set->list candidates)]
-                                       #:when (= name (candidate-name cand-struct)))
+                                       #:when (string=? name (candidate-name cand-struct)))
                                        cand-struct))
-               (define new-candidates (set-remove candidates cand))
-               (update-subscribers subscribers new-candidates)]))
+               (define new-candidates (list->set (filter-candidates (set->list candidates) (set (candidate-name cand)))))
+               (update-subscribers subscribers new-candidates)
+               (log-caucus-evt "Candidate ~a has successfully dropped out of the race!" (candidate-name cand))
+               (loop new-candidates subscribers)]))
 
           (handle-evt
             receive-roll-chan
@@ -141,13 +153,14 @@
     (thunk
       (log-caucus-evt "Candidate ~a has entered the race!" name)
       (channel-put registration-chan (candidate name tax-rate results-chan))
-      (let loop ()
+      (let loop ([in-the-race #t])
         (define votes (tally-votes (channel-get results-chan)))
         (cond 
-          [(< (hash-ref votes name 0) threshold)
-          (channel-put registration-chan (drop-out name))
-          (kill-thread (current-thread))] ;; should I kill the thread? Also, should I print something? (yes)
-          [else (loop)])))))
+          [(and in-the-race (< (hash-ref votes name 0) threshold))
+           (channel-put registration-chan (drop-out name))
+           (log-caucus-evt "Candidate ~a has submitted a request to drop out of the race!" name)
+           (loop #f)] ;; should I kill the thread? Also, should I print something? (yes)
+          [else (loop #t)])))))
 
 ;; Create the Voter Registry thread and channel
 (define (make-voter-registry)
@@ -242,7 +255,7 @@
                  retrieve-candidates-chan
                  (match-lambda
                    [(all-candidates new-candidates)
-                    (define eligible-candidates (list->set (filter (λ (cand) (not (set-member? removed-candidates (candidate-name cand)))) (set->list new-candidates))))
+                    (define eligible-candidates (list->set (filter-candidates (set->list new-candidates) removed-candidates)))
                     (if (not (set-empty? voters))
                       (loop 'VOTING voters eligible-candidates)
                       (loop 'SETUP voters eligible-candidates))])))]
@@ -277,6 +290,7 @@
                        (log-caucus-evt "Candidate ~a has been elected!" (candidate-name front-runner))
                        front-runner]
                       [else
+                        (for ([cand-struct (set->list candidates)]) (channel-put (candidate-results-chan cand-struct) (tally new-votes)))
                         (define loser (argmin (λ (cand) (hash-ref new-votes (candidate-name cand) 0)) (set->list candidates)))
                         (log-caucus-evt "Candidate ~a has been eliminated from the race!" (candidate-name loser))
                         (define next-candidates (set-remove candidates loser))
@@ -312,11 +326,13 @@
           (λ (evt) (printf "Dummy Message: ~a\n" evt) (loop))))))))
 
 (define (stupid-sort cand-name)
+  (define (compare-names first-cand second-cand) (string<? (candidate-name first-cand) (candidate-name second-cand)))
+
   (λ (candidates)
      (define candidate? (findf (λ (cand) (string=? cand-name (candidate-name cand))) candidates))
      (if candidate?
-       (cons candidate? (remove candidate? candidates))
-       (candidates))))
+       (cons candidate? (sort (remove candidate? candidates) compare-names))
+       (sort candidates compare-names))))
 
 ;;;;;;;;;;;; EXECUTION ;;;;;;;;;;;;
 
@@ -326,6 +342,7 @@
 (make-candidate "Bernie" 50 0 candidate-registration)
 (make-candidate "Biden" 25 0 candidate-registration)
 (make-candidate "Tulsi" 6 0 candidate-registration)
+(make-candidate "Donkey" 1000000000000000 200 candidate-registration)
 
 (make-voter "ABC" (stupid-sort "Bernie") voter-registration candidate-roll)
 (make-voter "DEF" (stupid-sort "Bernie") voter-registration candidate-roll)
@@ -342,5 +359,13 @@
 (make-voter "222" (stupid-sort "Tulsi") voter-registration candidate-roll)
 (make-voter "333" (stupid-sort "Tulsi") voter-registration candidate-roll)
 (make-voter "444" (stupid-sort "Tulsi") voter-registration candidate-roll)
+(make-voter "113" (stupid-sort "Tulsi") voter-registration candidate-roll)
+(make-voter "224" (stupid-sort "Tulsi") voter-registration candidate-roll)
+(make-voter "335" (stupid-sort "Tulsi") voter-registration candidate-roll)
+(make-voter "446" (stupid-sort "Tulsi") voter-registration candidate-roll)
+(make-voter "112" (stupid-sort "Donkey") voter-registration candidate-roll)
+(make-voter "223" (stupid-sort "Donkey") voter-registration candidate-roll)
+(make-voter "334" (stupid-sort "Donkey") voter-registration candidate-roll)
+(make-voter "445" (stupid-sort "Donkey") voter-registration candidate-roll)
 
 (thread-wait (make-vote-leader candidate-roll voter-roll))
