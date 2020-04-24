@@ -47,7 +47,6 @@
 (struct all-voters (voters) #:transparent)
 
 ;;;; ASSUMPTIONS ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; 1. Candidates don't leave/exit the race, they just sit and do nothing
 ;;     a. Candidates also don't try to re-insert themselves after dropping out
 ;; 2. Voters don't try voting for multiple candidates
 ;; 3. Voters never try voting for candidates that are no longer available for voting
@@ -149,18 +148,42 @@
 ;; Name Tax-Rate Candidate-Registry -> void
 (define (make-candidate name tax-rate threshold registration-chan)
   (define results-chan (make-channel))
+  (define cand-struct (candidate name tax-rate results-chan))
   (thread 
     (thunk
       (log-caucus-evt "Candidate ~a has entered the race!" name)
-      (channel-put registration-chan (candidate name tax-rate results-chan))
+      (channel-put registration-chan cand-struct)
       (let loop ([in-the-race #t])
-        (define votes (tally-votes (channel-get results-chan)))
-        (cond 
-          [(and in-the-race (< (hash-ref votes name 0) threshold))
-           (channel-put registration-chan (drop-out name))
-           (log-caucus-evt "Candidate ~a has submitted a request to drop out of the race!" name)
-           (loop #f)] ;; should I kill the thread? Also, should I print something? (yes)
-          [else (loop #t)])))))
+        (digest-results cand-struct threshold in-the-race registration-chan loop)))))
+
+;; receive and handle votes from latest election round
+;; Candidate Threshold Boolean Chan (Boolean -> void) -> void
+(define (digest-results cand threshold in-the-race reg-chan loop-func)
+  (define name (candidate-name cand))
+  (define results-chan (candidate-results-chan cand))
+
+  (define votes (tally-votes (channel-get results-chan)))
+  (cond
+    [(and in-the-race (< (hash-ref votes name 0) threshold))
+     (channel-put reg-chan (drop-out name))
+     (log-caucus-evt "Candidate ~a has submitted a request to drop out of the race!" name)
+     (loop-func #f)]
+    [else (loop-func #t)]))
+
+
+(define (make-stubborn-candidate name tax-rate threshold registration-chan)
+  (define results-chan (make-channel))
+  (define cand-struct (candidate name tax-rate results-chan))
+  (thread
+    (thunk
+      (log-caucus-evt "Stubborn Candidate ~a has entered the race!" name)
+      (channel-put registration-chan cand-struct)
+      (let loop ([in-the-race #t])
+        (when (not in-the-race) 
+          (channel-put registration-chan (candidate name tax-rate results-chan))
+          (log-caucus-evt "Stubborn Candidate ~a is trying to re-enter the race!" name)
+          (loop #t))
+        (digest-results cand-struct threshold in-the-race registration-chan loop)))))
 
 ;; Create the Voter Registry thread and channel
 (define (make-voter-registry)
@@ -325,16 +348,33 @@
           messages
           (λ (evt) (printf "Dummy Message: ~a\n" evt) (loop))))))))
 
-(define (stupid-sort cand-name)
+(define (stupid-sort . cand-names)
   (define (compare-names first-cand second-cand) (string<? (candidate-name first-cand) (candidate-name second-cand)))
 
   (λ (candidates)
-     (define candidate? (findf (λ (cand) (string=? cand-name (candidate-name cand))) candidates))
-     (if candidate?
-       (cons candidate? (sort (remove candidate? candidates) compare-names))
-       (sort candidates compare-names))))
+     (foldr 
+       (λ (cand-name cands)
+          (define candidate? (findf (λ (cand) (string=? cand-name (candidate-name cand))) cands))
+          (if candidate?
+            (cons candidate? (remove candidate? cands))
+            cands))
+       (sort candidates compare-names)
+       cand-names)))
+
+
+
+     #|(for ([cand-name (reverse cand-names)])
+       (define candidate? (findf (λ (cand) (string=? cand-name (candidate-name cand))) candidates))
+       (if candidate?
+         (cons candidate? (sort (remove candidate? candidates) compare-names))
+         (sort candidates compare-names)))))|#
 
 ;;;;;;;;;;;; EXECUTION ;;;;;;;;;;;;
+
+;; (define c (make-channel))
+;; (printf "res: ~a\n" ((stupid-sort "A" "B") (list (candidate "X" 0 c) (candidate "Y" 0 c) (candidate "A" 0 c) (candidate "Z" 0 c) (candidate "B" 0 c))))
+
+
 
 (define-values (candidate-registration candidate-roll) (make-candidate-registry))
 (define-values (voter-registration voter-roll) (make-voter-registry))
@@ -343,6 +383,11 @@
 (make-candidate "Biden" 25 0 candidate-registration)
 (make-candidate "Tulsi" 6 0 candidate-registration)
 (make-candidate "Donkey" 1000000000000000 200 candidate-registration)
+(make-candidate "Vermin Supreme" 35 0 candidate-registration)
+(make-candidate "1" 0 0 candidate-registration)
+(make-candidate "2" 0 0 candidate-registration)
+(make-candidate "3" 0 0 candidate-registration)
+(make-candidate "aaaaa" 0 100 candidate-registration)
 
 (make-voter "ABC" (stupid-sort "Bernie") voter-registration candidate-roll)
 (make-voter "DEF" (stupid-sort "Bernie") voter-registration candidate-roll)
@@ -367,5 +412,8 @@
 (make-voter "223" (stupid-sort "Donkey") voter-registration candidate-roll)
 (make-voter "334" (stupid-sort "Donkey") voter-registration candidate-roll)
 (make-voter "445" (stupid-sort "Donkey") voter-registration candidate-roll)
+#|
+(make-voter "098" (stupid-sort "1" "Tulsi") voter-registration candidate-roll)
+|#
 
 (thread-wait (make-vote-leader candidate-roll voter-roll))
