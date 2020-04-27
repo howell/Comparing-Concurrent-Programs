@@ -221,6 +221,18 @@
 
 ;; Make a Voter thread
 (define (make-voter name rank-candidates voter-registry candidate-registry)
+  (define normal-voting
+    (λ (existing-candidates available-candidates leader-chan)
+       (define priorities (rank-candidates (set->list existing-candidates)))
+       (define voting-for
+         (for/first ([candidate (in-list priorities)]
+                     #:when (member (candidate-name candidate) available-candidates))
+                    (candidate-name candidate)))
+       (channel-put leader-chan (vote name voting-for))))
+
+  (voter-skeleton name rank-candidates normal-voting voter-registry candidate-registry))
+
+  #|
   (define receive-candidates-chan (make-channel))
   (define voting-chan (make-channel))
   (thread
@@ -246,17 +258,47 @@
                              #:when (member (candidate-name candidate) available-candidates))
                             (candidate-name candidate)))
                (channel-put leader-chan (vote name voting-for))
-               (loop candidates)])))))))
+               (loop candidates)])))))))|#
 
-(define (make-greedy-voter name rank-candidates voter-registry candidate-registry)
+(define (voter-skeleton name rank-candidates voting-procedure voter-registry candidate-registry)
   (define receive-candidates-chan (make-channel))
   (define voting-chan (make-channel))
   (thread
     (thunk
-      (log-caucus-evt "Greedy voter ~a is registering!" name)
+      (log-caucus-evt "Voter ~a is registering!" name)
       (channel-put candidate-registry (subscribe receive-candidates-chan))
       (channel-put voter-registry (voter name voting-chan))
       (let loop ([candidates (set)])
+        (sync
+          (handle-evt
+            receive-candidates-chan
+            (match-lambda
+              ;; A response from the Candidate Registry has been received!
+              [(all-candidates curr-candidates) (loop curr-candidates)]))
+          (handle-evt
+            voting-chan
+            (match-lambda
+              ;; A request to vote has been received from the Vote Leader!
+              [(request-vote available-candidates leader-chan)
+               (voting-procedure candidates available-candidates leader-chan)
+               (loop candidates)])))))))
+
+(define (make-greedy-voter name rank-candidates voter-registry candidate-registry)
+  (define greedy-voting 
+    (λ (existing-candidates available-candidates leader-chan)
+         (define priorities (rank-candidates (set->list existing-candidates)))
+         (define voting-for
+           (for/first ([candidate (in-list priorities)]
+                       #:when (member (candidate-name candidate) available-candidates))
+                      (candidate-name candidate)))
+         (define second-vote
+           (for/first ([candidate (in-list priorities)]
+                       #:when (and (member (candidate-name candidate) available-candidates) (not (string=? (candidate-name candidate) voting-for))))
+                       (candidate-name candidate)))
+         (channel-put leader-chan (vote name voting-for))
+         (channel-put leader-chan (vote name (if second-vote second-vote voting-for)))))
+
+  (voter-skeleton name rank-candidates greedy-voting voter-registry candidate-registry))
 
 ;; Make the Vote Leader thread
 (define (make-vote-leader candidate-registry voter-registry)
@@ -290,7 +332,7 @@
         ;; Transition (loop) on the next state for the vote leader
         ;; (Setof Voter) (Setof Candidate) (V C -> C) -> C
         (define (transition-states voters candidates loop)
-          (loop voters candidates (next-state voters candidates)))
+          (loop (next-state voters candidates) voters candidates))
 
         (let loop ([curr-state 'SETUP]
                    [voters (set)]
@@ -301,7 +343,7 @@
                (handle-evt
                  retrieve-voters-chan
                  (match-lambda
-                   [(all-voters new-voters) 
+                   [(all-voters new-voters)
                     (transition-states new-voters candidates loop)]))
                (handle-evt
                  retrieve-candidates-chan
