@@ -53,8 +53,8 @@
 ;; 3. Voters never try voting for candidates that are no longer available for voting
 ;; 4. Voters never leave early (with an announcement)
 ;; 5. Voters never leave early (without an announcement)
-;; 6. Voters never try joining late (how is this even expressible...?)
-;; 7. Voters never try to vote if they haven't registered (also not expressible...?)
+;; 6. Voters never try joining late (how is this even expressible...?) --> Hard to get right due to timing
+;; 7. Voters never try to vote if they haven't registered (also not expressible...?) --> Handled by voter registry
 ;; 
 
 ;;;; FEATURES ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -228,37 +228,29 @@
          (for/first ([candidate (in-list priorities)]
                      #:when (member (candidate-name candidate) available-candidates))
                     (candidate-name candidate)))
-       (channel-put leader-chan (vote name voting-for))))
+       (announce-vote leader-chan (vote name voting-for))))
 
   (voter-skeleton name rank-candidates normal-voting voter-registry candidate-registry))
 
-  #|
-  (define receive-candidates-chan (make-channel))
-  (define voting-chan (make-channel))
-  (thread
-    (thunk
-      (log-caucus-evt "Voter ~a is registering!" name)
-      (channel-put candidate-registry (subscribe receive-candidates-chan))
-      (channel-put voter-registry (voter name voting-chan))
-      (let loop ([candidates (set)])
-        (sync
-          (handle-evt
-            receive-candidates-chan
-            (match-lambda
-              ;; A response from the Candidate Registry has been received!
-              [(all-candidates curr-candidates) (loop curr-candidates)]))
-          (handle-evt
-            voting-chan
-            (match-lambda
-              ;; A request to vote has been received from the Vote Leader!
-              [(request-vote available-candidates leader-chan)
-               (define priorities (rank-candidates (set->list candidates)))
-               (define voting-for
-                 (for/first ([candidate (in-list priorities)]
-                             #:when (member (candidate-name candidate) available-candidates))
-                            (candidate-name candidate)))
-               (channel-put leader-chan (vote name voting-for))
-               (loop candidates)])))))))|#
+(define (make-greedy-voter name rank-candidates voter-registry candidate-registry)
+  (define greedy-voting 
+    (λ (existing-candidates available-candidates leader-chan)
+       (define priorities (rank-candidates (set->list existing-candidates)))
+       (define voting-for
+         (for/first ([candidate (in-list priorities)]
+                     #:when (member (candidate-name candidate) available-candidates))
+                    (candidate-name candidate)))
+       (define second-vote
+         (for/first ([candidate (in-list priorities)]
+                     #:when (and (member (candidate-name candidate) available-candidates) (not (string=? (candidate-name candidate) voting-for))))
+                     (candidate-name candidate)))
+       (announce-vote leader-chan (vote name voting-for))
+       (announce-vote leader-chan (vote name (if second-vote second-vote voting-for)))))
+
+  (voter-skeleton name rank-candidates greedy-voting voter-registry candidate-registry))
+
+(define (announce-vote leader-chan vote)
+  (thread (thunk (channel-put leader-chan vote))))
 
 (define (voter-skeleton name rank-candidates voting-procedure voter-registry candidate-registry)
   (define receive-candidates-chan (make-channel))
@@ -283,23 +275,6 @@
                (voting-procedure candidates available-candidates leader-chan)
                (loop candidates)])))))))
 
-(define (make-greedy-voter name rank-candidates voter-registry candidate-registry)
-  (define greedy-voting 
-    (λ (existing-candidates available-candidates leader-chan)
-         (define priorities (rank-candidates (set->list existing-candidates)))
-         (define voting-for
-           (for/first ([candidate (in-list priorities)]
-                       #:when (member (candidate-name candidate) available-candidates))
-                      (candidate-name candidate)))
-         (define second-vote
-           (for/first ([candidate (in-list priorities)]
-                       #:when (and (member (candidate-name candidate) available-candidates) (not (string=? (candidate-name candidate) voting-for))))
-                       (candidate-name candidate)))
-         (channel-put leader-chan (vote name voting-for))
-         (channel-put leader-chan (vote name (if second-vote second-vote voting-for)))))
-
-  (voter-skeleton name rank-candidates greedy-voting voter-registry candidate-registry))
-
 ;; Make the Vote Leader thread
 (define (make-vote-leader candidate-registry voter-registry)
   (define retrieve-candidates-chan (make-channel))
@@ -316,7 +291,7 @@
 
       ;; Start a sequence of votes to determine an elected candidate
       ;; (Setof Name) -> Candidate
-      (define (run-caucus removed-candidates)
+      (define (run-caucus removed-candidates voting-whitelist)
         (log-caucus-evt "The Vote Leader is beginning a new round of voting!")
 
         (channel-put candidate-registry (request-msg retrieve-candidates-chan))
@@ -336,7 +311,7 @@
 
         (let loop ([curr-state 'SETUP]
                    [voters (set)]
-                   [candidates (set)]) ;; this is just to demonstrate the type
+                   [candidates (set)])
           (match curr-state
             ['SETUP
              (sync
@@ -344,7 +319,10 @@
                  retrieve-voters-chan
                  (match-lambda
                    [(all-voters new-voters)
-                    (transition-states new-voters candidates loop)]))
+                    (if (set-empty? voting-whitelist)
+                      (transition-states new-voters candidates loop)
+                      ;; TODO set-intersect might break b/c of memory location
+                      (transition-states (set-intersect new-voters voting-whitelist) candidates loop))]))
                (handle-evt
                  retrieve-candidates-chan
                  (match-lambda
@@ -362,37 +340,60 @@
       ;; Determine winner of a round of voting or eliminate a candidate and move to the next one
       ;; (Setof Candidate) (Setof Voter) -> Candidate
       (define (collect-votes voters candidates removed-candidates)
-        (let voting-loop ([votes (hash)])
+        (printf "We are entering a new round of voting!\n")
+        (let voting-loop ([whitelist (foldl (λ (voter curr-list) (hash-set curr-list (voter-name voter) voter)) (hash) (set->list voters))]
+                          [voting-record (hash)]
+                          [votes (hash)])
           (sync
             (handle-evt
               voting-chan
               (match-lambda
                 [(vote name candidate)
+                 (printf "Voter ~a voted for candidate ~a!\n" name candidate)
+                 (when (not (hash-has-key? whitelist name)) (voting-loop (hash-remove whitelist name) voting-record votes))
+                 (when (hash-has-key? voting-record name)
+                   (define shrunk-votes (hash-update votes (hash-ref voting-record name) sub1))
+                   (define shrunk-whitelist (hash-remove whitelist name))
+                   (define shrunk-voting-record (hash-remove voting-record name))
+                   (voting-loop shrunk-whitelist shrunk-voting-record shrunk-votes))
+
                  (log-caucus-evt "Voter ~a has voted for Candidate ~a!" name candidate)
+                 (define new-voting-record (hash-set voting-record name candidate))
                  (define new-votes (hash-update votes candidate add1 0))
                  (define num-votes (for/sum ([votes-for-cand (in-hash-values new-votes)]) votes-for-cand))
                  (cond
-                   [(= num-votes (set-count voters))
+                   [(= num-votes (hash-count whitelist))
+                    (printf "Round of voting ended! Let's see who won. For reference, the votes are: ~a\n" votes)
                     (log-caucus-evt "Round of voting has ended! Time to tally the votes!")
                     (define front-runner (argmax (λ (cand) (hash-ref new-votes (candidate-name cand) 0)) (set->list candidates)))
                     (define their-votes (hash-ref new-votes (candidate-name front-runner) 0))
+                    (printf "The frontrunner is ~a, with votes ~a!\n" front-runner their-votes)
                     (cond
-                      [(> their-votes (/ num-votes 2)) 
+                      [(> their-votes (/ num-votes 2))
+                       (printf "WE ARE FINISHED!\n\n")
                        (log-caucus-evt "Candidate ~a has been elected!" (candidate-name front-runner))
                        front-runner]
                       [else
+                        (printf "Sad!\n")
                         (define losing-cand (argmin (λ (cand) (hash-ref new-votes (candidate-name cand) 0)) (set->list candidates)))
                         (for ([cand-struct (set->list candidates)]) 
                           (channel-put (candidate-results-chan cand-struct) (tally new-votes)))
                         (for/first ([cand-struct (set->list candidates)]
                                     #:when (string=? (candidate-name losing-cand) (candidate-name cand-struct)))
                                    (channel-put (candidate-results-chan cand-struct) (loser (candidate-name cand-struct))))
+                        (printf "The losing candidate is ~a\n" losing-cand)
                         (log-caucus-evt "Candidate ~a has been eliminated from the race!" (candidate-name losing-cand))
                         (define next-candidates (set-remove candidates losing-cand))
-                        (run-caucus (set-add removed-candidates (candidate-name losing-cand)))])]
-                   [else (voting-loop new-votes)])])))))
+                        (run-caucus (set-add removed-candidates (candidate-name losing-cand)) (list->set (hash-values whitelist)))])]
+
+                   [else (voting-loop whitelist new-voting-record new-votes)])])))))
+                     ;; voting loop needs to keep track of each voter and who they voted for
+                     ;; + a whitelist of voters
+                     ;; + only ask for list of voters once (or, each new list after first round must be a subset of the previous
+                     ;; when a duplicated vote is received, 
         
-      (define winner (run-caucus (set)))
+      (define winner (run-caucus (set) (set)))
+      (printf "\n\n\nHELLO WORLD!!!\n\n\n")
       (printf "We have a winner: ~a!\n" (candidate-name winner)))))
 
 
@@ -443,24 +444,34 @@
 (make-candidate "Tulsi" 6 0 candidate-registration)
 (make-candidate "Donkey" 1000000000000000 200 candidate-registration)
 (make-candidate "Vermin Supreme" 35 0 candidate-registration)
-(make-candidate "Vermin Supreme 2" 35 0 candidate-registration)
-(make-candidate "Vermin Supreme 3" 35 0 candidate-registration)
 (make-stubborn-candidate "1" 0 2000 candidate-registration)
-;; (make-candidate "2" 0 0 candidate-registration)
-;; (make-candidate "3" 0 0 candidate-registration)
-;; (make-candidate "aaaaa" 0 100 candidate-registration)
 
+(make-voter "XYZ" (stupid-sort "Vermin Supreme") voter-registration candidate-roll)
+(make-voter "FOO" (stupid-sort "Vermin Supreme") voter-registration candidate-roll)
+(make-voter "BAR" (stupid-sort "Vermin Supreme") voter-registration candidate-roll)
+(make-voter "BAZ" (stupid-sort "Vermin Supreme") voter-registration candidate-roll)
+(make-voter "012" (stupid-sort "Biden") voter-registration candidate-roll)
+(make-voter "123" (stupid-sort "Biden") voter-registration candidate-roll)
+(make-voter "234" (stupid-sort "Biden") voter-registration candidate-roll)
+(make-greedy-voter "ABC" (stupid-sort "Bernie" "Tulsi") voter-registration candidate-roll)
+(make-greedy-voter "DEF" (stupid-sort "Bernie" "Tulsi") voter-registration candidate-roll)
+(make-greedy-voter "GHI" (stupid-sort "Bernie" "Tulsi") voter-registration candidate-roll)
+(make-greedy-voter "JKL" (stupid-sort "Biden" "Tulsi") voter-registration candidate-roll)
+(make-greedy-voter "MNO" (stupid-sort "Biden" "Tulsi") voter-registration candidate-roll)
+(make-greedy-voter "PQR" (stupid-sort "Biden" "Tulsi") voter-registration candidate-roll)
+
+#|
 (make-voter "ABC" (stupid-sort "Bernie") voter-registration candidate-roll)
 (make-voter "DEF" (stupid-sort "Bernie") voter-registration candidate-roll)
 (make-voter "GHI" (stupid-sort "Bernie") voter-registration candidate-roll)
+
 (make-voter "JKL" (stupid-sort "Biden") voter-registration candidate-roll)
 (make-voter "MNO" (stupid-sort "Biden") voter-registration candidate-roll)
 (make-voter "PQR" (stupid-sort "Biden") voter-registration candidate-roll)
 (make-voter "STU" (stupid-sort "Biden") voter-registration candidate-roll)
 (make-voter "VWX" (stupid-sort "Biden") voter-registration candidate-roll)
 (make-voter "YZZ" (stupid-sort "Biden") voter-registration candidate-roll)
-;; (make-voter "CBA" (stupid-sort "Biden") voter-registration candidate-roll)
-;; (make-voter "CAB" (stupid-sort "Biden") voter-registration candidate-roll)
+
 (make-voter "111" (stupid-sort "Tulsi") voter-registration candidate-roll)
 (make-voter "222" (stupid-sort "Tulsi") voter-registration candidate-roll)
 (make-voter "333" (stupid-sort "Tulsi") voter-registration candidate-roll)
@@ -469,14 +480,13 @@
 (make-voter "224" (stupid-sort "Tulsi") voter-registration candidate-roll)
 (make-voter "335" (stupid-sort "Tulsi") voter-registration candidate-roll)
 (make-voter "446" (stupid-sort "Tulsi") voter-registration candidate-roll)
-(make-voter "112" (stupid-sort "Donkey") voter-registration candidate-roll)
-(make-voter "223" (stupid-sort "Donkey") voter-registration candidate-roll)
-(make-voter "334" (stupid-sort "Donkey") voter-registration candidate-roll)
-(make-voter "445" (stupid-sort "Donkey") voter-registration candidate-roll)
-(make-voter "446" (stupid-sort "1") voter-registration candidate-roll)
-;; (make-voter "447" (stupid-sort "1") voter-registration candidate-roll)
-;; (make-voter "448" (stupid-sort "1") voter-registration candidate-roll)
-;; (make-voter "449" (stupid-sort "1") voter-registration candidate-roll)
-;; (make-voter "450" (stupid-sort "1") voter-registration candidate-roll)
+
+(make-voter "098" (stupid-sort "Donkey") voter-registration candidate-roll)
+(make-voter "097" (stupid-sort "Donkey") voter-registration candidate-roll)
+(make-voter "096" (stupid-sort "Donkey") voter-registration candidate-roll)
+(make-voter "095" (stupid-sort "Donkey") voter-registration candidate-roll)
+
+(make-voter "094" (stupid-sort "1") voter-registration candidate-roll)
+|#
 
 (thread-wait (make-vote-leader candidate-roll voter-roll))
