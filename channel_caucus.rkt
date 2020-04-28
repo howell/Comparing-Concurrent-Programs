@@ -49,9 +49,7 @@
 (struct all-voters (voters) #:transparent)
 
 ;;;; ASSUMPTIONS ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; 2. Voters don't try voting for multiple candidates
 ;; 3. Voters never try voting for candidates that are no longer available for voting
-;; 4. Voters never leave early (with an announcement)
 ;; 5. Voters never leave early (without an announcement)
 ;; 6. Voters never try joining late (how is this even expressible...?) --> Hard to get right due to timing
 ;; 7. Voters never try to vote if they haven't registered (also not expressible...?) --> Handled by voter registry
@@ -230,7 +228,7 @@
                     (candidate-name candidate)))
        (announce-vote leader-chan (vote name voting-for))))
 
-  (voter-skeleton name rank-candidates normal-voting voter-registry candidate-registry))
+  (voter-skeleton name normal-voting voter-registry candidate-registry))
 
 (define (make-greedy-voter name rank-candidates voter-registry candidate-registry)
   (define greedy-voting 
@@ -247,12 +245,19 @@
        (announce-vote leader-chan (vote name voting-for))
        (announce-vote leader-chan (vote name (if second-vote second-vote voting-for)))))
 
-  (voter-skeleton name rank-candidates greedy-voting voter-registry candidate-registry))
+  (voter-skeleton name greedy-voting voter-registry candidate-registry))
+
+(define (make-stubborn-voter name favorite-candidate voter-registry candidate-registry)
+  (define stubborn-voting
+    (λ (existing-candidates available-candidates leader-chan)
+       (announce-vote leader-chan (vote name favorite-candidate))))
+
+  (voter-skeleton name stubborn-voting voter-registry candidate-registry))
 
 (define (announce-vote leader-chan vote)
   (thread (thunk (channel-put leader-chan vote))))
 
-(define (voter-skeleton name rank-candidates voting-procedure voter-registry candidate-registry)
+(define (voter-skeleton name voting-procedure voter-registry candidate-registry)
   (define receive-candidates-chan (make-channel))
   (define voting-chan (make-channel))
   (thread
@@ -344,53 +349,57 @@
           ;; Remove a voter's vote and ban them from voting in the future
           ;; Name Name Hash Hash Hash Loop -> C
           ;; INVARIANT: Voter has voted before and their voter information is stored in the accumulators
-          (define (blacklist-voter name candidate)
+          (define (blacklist-repeat-voter name)
             (define shrunk-votes (hash-update votes (hash-ref voting-record name) sub1))
             (define shrunk-whitelist (hash-remove whitelist name))
             (define shrunk-voting-record (hash-remove voting-record name))
             (voting-loop shrunk-whitelist shrunk-voting-record shrunk-votes))
 
+          (define (blacklist-voter name)
+            (voting-loop (hash-remove whitelist name) voting-record votes))
+            
+
           ;; Determine winner if one candidate has received majority of votes, otherwise begin next round of voting
-          (define (count-votes new-voting-record new-votes num-votes)
-            (define front-runner (argmax (λ (cand) (hash-ref new-votes (candidate-name cand) 0)) (set->list candidates)))
-            (define their-votes (hash-ref new-votes (candidate-name front-runner) 0))
+          (define (count-votes num-votes)
+            (define front-runner (argmax (λ (cand) (hash-ref votes (candidate-name cand) 0)) (set->list candidates)))
+            (define their-votes (hash-ref votes (candidate-name front-runner) 0))
             (cond
               [(> their-votes (/ num-votes 2))
                (log-caucus-evt "Candidate ~a has been elected!" (candidate-name front-runner))
                front-runner]
-              [else (next-round new-votes)]))
+              [else (next-round)]))
 
           ;; Remove the worst-performing candidate from the race and re-run caucus
-          (define (next-round new-votes)
-            (define losing-cand (argmin (λ (cand) (hash-ref new-votes (candidate-name cand) 0)) (set->list candidates)))
+          (define (next-round)
+            (define losing-cand (argmin (λ (cand) (hash-ref votes (candidate-name cand) 0)) (set->list candidates)))
             (for ([cand-struct (set->list candidates)]) 
-              (channel-put (candidate-results-chan cand-struct) (tally new-votes)))
+              (channel-put (candidate-results-chan cand-struct) (tally votes)))
             (for/first ([cand-struct (set->list candidates)]
                         #:when (string=? (candidate-name losing-cand) (candidate-name cand-struct)))
                        (channel-put (candidate-results-chan cand-struct) (loser (candidate-name cand-struct))))
             (log-caucus-evt "Candidate ~a has been eliminated from the race!" (candidate-name losing-cand))
-            (define next-candidates (set-remove candidates losing-cand))
             (run-caucus (set-add removed-candidates (candidate-name losing-cand)) (list->set (hash-values whitelist))))
 
-          (sync
-            (handle-evt
-              voting-chan
-              (match-lambda
-                [(vote name candidate)
-                 (cond
-                   [(not (hash-has-key? whitelist name))
-                    (voting-loop whitelist voting-record votes)]
-                   [(hash-has-key? voting-record name)
-                    (blacklist-voter name candidate)]
-                   [else
-                    (log-caucus-evt "Voter ~a has voted for Candidate ~a!" name candidate)
-                    (define new-voting-record (hash-set voting-record name candidate))
-                    (define new-votes (hash-update votes candidate add1 0))
-                    (define num-votes (for/sum ([votes-for-cand (in-hash-values new-votes)]) votes-for-cand))
-                    (cond
-                      [(= num-votes (hash-count whitelist))
-                       (count-votes new-voting-record new-votes num-votes)]
-                      [else (voting-loop whitelist new-voting-record new-votes)])])])))))
+          (define num-votes (for/sum ([votes-for-cand (in-hash-values votes)]) votes-for-cand))
+          (cond
+            [(= num-votes (hash-count whitelist))
+             (count-votes num-votes)]
+            [else
+              (sync
+                (handle-evt
+                  voting-chan
+                  (match-lambda
+                    [(vote name candidate)
+                     (cond
+                       [(not (hash-has-key? whitelist name))
+                        (voting-loop whitelist voting-record votes)]
+                       [(hash-has-key? voting-record name)
+                        (blacklist-repeat-voter name)]
+                       [(andmap (λ (cand) (not (string=? candidate (candidate-name cand)))) (set->list candidates))
+                        (blacklist-voter name)]
+                       [else
+                        (log-caucus-evt "Voter ~a has voted for Candidate ~a!" name candidate)
+                        (voting-loop whitelist (hash-set voting-record name candidate) (hash-update votes candidate add1 0))])])))])))
         
       (define winner (run-caucus (set) (set)))
       (printf "We have a winner: ~a!\n" (candidate-name winner)))))
@@ -443,7 +452,7 @@
 (make-candidate "Tulsi" 6 0 candidate-registration)
 (make-candidate "Donkey" 1000000000000000 200 candidate-registration)
 (make-candidate "Vermin Supreme" 35 0 candidate-registration)
-(make-stubborn-candidate "1" 0 2000 candidate-registration)
+(make-stubborn-candidate "ZZZ" 0 200000 candidate-registration)
 
 (make-voter "XYZ" (stupid-sort "Vermin Supreme") voter-registration candidate-roll)
 (make-voter "FOO" (stupid-sort "Vermin Supreme") voter-registration candidate-roll)
@@ -458,6 +467,15 @@
 (make-greedy-voter "JKL" (stupid-sort "Biden" "Tulsi") voter-registration candidate-roll)
 (make-greedy-voter "MNO" (stupid-sort "Biden" "Tulsi") voter-registration candidate-roll)
 (make-greedy-voter "PQR" (stupid-sort "Biden" "Tulsi") voter-registration candidate-roll)
+(make-stubborn-voter "345" "Tulsi" voter-registration candidate-roll)
+(make-stubborn-voter "456" "ZZZ" voter-registration candidate-roll)
+(make-stubborn-voter "567" "ZZZ" voter-registration candidate-roll)
+(make-stubborn-voter "678" "ZZZ" voter-registration candidate-roll)
+(make-stubborn-voter "789" "ZZZ" voter-registration candidate-roll)
+(make-stubborn-voter "457" "ZZZ" voter-registration candidate-roll)
+(make-stubborn-voter "568" "ZZZ" voter-registration candidate-roll)
+(make-stubborn-voter "679" "ZZZ" voter-registration candidate-roll)
+(make-stubborn-voter "790" "ZZZ" voter-registration candidate-roll)
 
 #|
 (make-voter "ABC" (stupid-sort "Bernie") voter-registration candidate-roll)
