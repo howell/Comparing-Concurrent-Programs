@@ -286,9 +286,6 @@
       (log-caucus-evt "The Vote Leader is ready to run the caucus!")
       ;; DECISION: once you're subscribed to candidates, begin voting phase
 
-      ;; TODO ASSUMPTION: there are always both voters and candidates.
-
-
       ;; Start a sequence of votes to determine an elected candidate
       ;; (Setof Name) -> Candidate
       (define (run-caucus removed-candidates voting-whitelist)
@@ -321,7 +318,6 @@
                    [(all-voters new-voters)
                     (if (set-empty? voting-whitelist)
                       (transition-states new-voters candidates loop)
-                      ;; TODO set-intersect might break b/c of memory location
                       (transition-states (set-intersect new-voters voting-whitelist) candidates loop))]))
                (handle-evt
                  retrieve-candidates-chan
@@ -340,60 +336,63 @@
       ;; Determine winner of a round of voting or eliminate a candidate and move to the next one
       ;; (Setof Candidate) (Setof Voter) -> Candidate
       (define (collect-votes voters candidates removed-candidates)
-        (printf "We are entering a new round of voting!\n")
+
         (let voting-loop ([whitelist (foldl (λ (voter curr-list) (hash-set curr-list (voter-name voter) voter)) (hash) (set->list voters))]
                           [voting-record (hash)]
                           [votes (hash)])
+
+          ;; Remove a voter's vote and ban them from voting in the future
+          ;; Name Name Hash Hash Hash Loop -> C
+          ;; INVARIANT: Voter has voted before and their voter information is stored in the accumulators
+          (define (blacklist-voter name candidate)
+            (define shrunk-votes (hash-update votes (hash-ref voting-record name) sub1))
+            (define shrunk-whitelist (hash-remove whitelist name))
+            (define shrunk-voting-record (hash-remove voting-record name))
+            (voting-loop shrunk-whitelist shrunk-voting-record shrunk-votes))
+
+          ;; Determine winner if one candidate has received majority of votes, otherwise begin next round of voting
+          (define (count-votes new-voting-record new-votes num-votes)
+            (define front-runner (argmax (λ (cand) (hash-ref new-votes (candidate-name cand) 0)) (set->list candidates)))
+            (define their-votes (hash-ref new-votes (candidate-name front-runner) 0))
+            (cond
+              [(> their-votes (/ num-votes 2))
+               (log-caucus-evt "Candidate ~a has been elected!" (candidate-name front-runner))
+               front-runner]
+              [else (next-round new-votes)]))
+
+          ;; Remove the worst-performing candidate from the race and re-run caucus
+          (define (next-round new-votes)
+            (define losing-cand (argmin (λ (cand) (hash-ref new-votes (candidate-name cand) 0)) (set->list candidates)))
+            (for ([cand-struct (set->list candidates)]) 
+              (channel-put (candidate-results-chan cand-struct) (tally new-votes)))
+            (for/first ([cand-struct (set->list candidates)]
+                        #:when (string=? (candidate-name losing-cand) (candidate-name cand-struct)))
+                       (channel-put (candidate-results-chan cand-struct) (loser (candidate-name cand-struct))))
+            (log-caucus-evt "Candidate ~a has been eliminated from the race!" (candidate-name losing-cand))
+            (define next-candidates (set-remove candidates losing-cand))
+            (run-caucus (set-add removed-candidates (candidate-name losing-cand)) (list->set (hash-values whitelist))))
+
           (sync
             (handle-evt
               voting-chan
               (match-lambda
                 [(vote name candidate)
-                 (printf "Voter ~a voted for candidate ~a!\n" name candidate)
-                 (when (not (hash-has-key? whitelist name)) (voting-loop (hash-remove whitelist name) voting-record votes))
-                 (when (hash-has-key? voting-record name)
-                   (define shrunk-votes (hash-update votes (hash-ref voting-record name) sub1))
-                   (define shrunk-whitelist (hash-remove whitelist name))
-                   (define shrunk-voting-record (hash-remove voting-record name))
-                   (voting-loop shrunk-whitelist shrunk-voting-record shrunk-votes))
-
-                 (log-caucus-evt "Voter ~a has voted for Candidate ~a!" name candidate)
-                 (define new-voting-record (hash-set voting-record name candidate))
-                 (define new-votes (hash-update votes candidate add1 0))
-                 (define num-votes (for/sum ([votes-for-cand (in-hash-values new-votes)]) votes-for-cand))
                  (cond
-                   [(= num-votes (hash-count whitelist))
-                    (printf "Round of voting ended! Let's see who won. For reference, the votes are: ~a\n" votes)
-                    (log-caucus-evt "Round of voting has ended! Time to tally the votes!")
-                    (define front-runner (argmax (λ (cand) (hash-ref new-votes (candidate-name cand) 0)) (set->list candidates)))
-                    (define their-votes (hash-ref new-votes (candidate-name front-runner) 0))
-                    (printf "The frontrunner is ~a, with votes ~a!\n" front-runner their-votes)
+                   [(not (hash-has-key? whitelist name))
+                    (voting-loop whitelist voting-record votes)]
+                   [(hash-has-key? voting-record name)
+                    (blacklist-voter name candidate)]
+                   [else
+                    (log-caucus-evt "Voter ~a has voted for Candidate ~a!" name candidate)
+                    (define new-voting-record (hash-set voting-record name candidate))
+                    (define new-votes (hash-update votes candidate add1 0))
+                    (define num-votes (for/sum ([votes-for-cand (in-hash-values new-votes)]) votes-for-cand))
                     (cond
-                      [(> their-votes (/ num-votes 2))
-                       (printf "WE ARE FINISHED!\n\n")
-                       (log-caucus-evt "Candidate ~a has been elected!" (candidate-name front-runner))
-                       front-runner]
-                      [else
-                        (printf "Sad!\n")
-                        (define losing-cand (argmin (λ (cand) (hash-ref new-votes (candidate-name cand) 0)) (set->list candidates)))
-                        (for ([cand-struct (set->list candidates)]) 
-                          (channel-put (candidate-results-chan cand-struct) (tally new-votes)))
-                        (for/first ([cand-struct (set->list candidates)]
-                                    #:when (string=? (candidate-name losing-cand) (candidate-name cand-struct)))
-                                   (channel-put (candidate-results-chan cand-struct) (loser (candidate-name cand-struct))))
-                        (printf "The losing candidate is ~a\n" losing-cand)
-                        (log-caucus-evt "Candidate ~a has been eliminated from the race!" (candidate-name losing-cand))
-                        (define next-candidates (set-remove candidates losing-cand))
-                        (run-caucus (set-add removed-candidates (candidate-name losing-cand)) (list->set (hash-values whitelist)))])]
-
-                   [else (voting-loop whitelist new-voting-record new-votes)])])))))
-                     ;; voting loop needs to keep track of each voter and who they voted for
-                     ;; + a whitelist of voters
-                     ;; + only ask for list of voters once (or, each new list after first round must be a subset of the previous
-                     ;; when a duplicated vote is received, 
+                      [(= num-votes (hash-count whitelist))
+                       (count-votes new-voting-record new-votes num-votes)]
+                      [else (voting-loop whitelist new-voting-record new-votes)])])])))))
         
       (define winner (run-caucus (set) (set)))
-      (printf "\n\n\nHELLO WORLD!!!\n\n\n")
       (printf "We have a winner: ~a!\n" (candidate-name winner)))))
 
 
