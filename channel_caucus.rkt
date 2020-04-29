@@ -6,8 +6,6 @@
 (define (log-caucus-evt evt . vals)
   (log-message caucus-log 'info (logger-name caucus-log) (apply format evt vals)))
 
-;; TODO need to do timeout management of voters both here and in syndicate version
-
 ;; a Name is a string
 
 ;; a Tax-Rate is a number
@@ -16,22 +14,28 @@
 
 ;; a Chan is a channel
 
+;; a Region is a string
+
 ;; a Candidate is a (candidate Name Tax-Rate Chan)
 (struct candidate (name tax-rate results-chan) #:transparent)
 
 ;; a DropOut is a (drop-out Name)
 (struct drop-out (name) #:transparent)
 
+;; a Loser is a (loser Name)
 (struct loser (name) #:transparent)
 
-;; a Voter is a (voter Name Chan)
-(struct voter (name voting-chan) #:transparent)
+;; a Voter is a (voter Name Region Chan)
+(struct voter (name region voting-chan) #:transparent)
 
 ;; a Subscribe is a (subscribe Chan)
 (struct subscribe (chan) #:transparent)
 
 ;; a Request-Msg is a (request-msg Chan)
 (struct request-msg (chan) #:transparent)
+
+;; a RequestVoters is a (request-voters Region Chan)
+(struct request-voters (region leader-chan) #:transparent)
 
 ;; a Request-Vote is a (request-vote Chan)
 (struct request-vote (candidates chan) #:transparent)
@@ -47,6 +51,16 @@
 
 ;; an All-Voters is a (all-voters [Setof Voter])
 (struct all-voters (voters) #:transparent)
+
+;; a DeclareLeader is a (declare-leader Region Chan) 
+(struct declare-leader (region leader-chan) #:transparent)
+
+;; a DeclareManager is a (declare-manager Chan)
+(struct declare-manager (manager-chan) #:transparent)
+
+;; a Winner is a (winner Name)
+(struct winner (candidate) #:transparent)
+
 
 ;;;; ASSUMPTIONS ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 6. Voters never try joining late (how is this even expressible...?) --> Hard to get right due to timing  (vote only after first round?)
@@ -196,26 +210,26 @@
   (thread
     (thunk
       (log-caucus-evt "The Voter Registry has opened for business!")
-      (let loop ([voters (set)])
+      (let loop ([voters (hash)])
         (sync
           (handle-evt
             registration-chan
             (match-lambda
               ;; A Voter has registered!
-              [(voter name voter-chan) 
+              [(voter name region voter-chan) 
                (log-caucus-evt "Voter ~a has successfully registered!" name)
-               (loop (set-add voters (voter name voter-chan)))]))
+               (loop (hash-update voters region (λ (old) (set-add old (voter name region voter-chan))) (set)))]))
           (handle-evt
             receive-roll-chan
             (match-lambda
               ;; A request for voter data has been received!
-              [(request-msg recv-chan) 
-               (channel-put recv-chan (all-voters voters))
+              [(request-vote region recv-chan)
+               (channel-put recv-chan (all-voters (hash-ref voters region (set))))
                (loop voters)]))))))
   (values registration-chan receive-roll-chan))
 
 ;; Make a Voter thread
-(define (make-voter name rank-candidates voter-registry candidate-registry)
+(define (make-voter name region rank-candidates voter-registry candidate-registry)
   (define normal-voting
     (λ (existing-candidates available-candidates leader-chan)
        (define priorities (rank-candidates (set->list existing-candidates)))
@@ -225,9 +239,9 @@
                     (candidate-name candidate)))
        (announce-vote leader-chan (vote name voting-for))))
 
-  (voter-skeleton name normal-voting voter-registry candidate-registry))
+  (voter-skeleton name region normal-voting voter-registry candidate-registry))
 
-(define (make-greedy-voter name rank-candidates voter-registry candidate-registry)
+(define (make-greedy-voter name region rank-candidates voter-registry candidate-registry)
   (define greedy-voting 
     (λ (existing-candidates available-candidates leader-chan)
        (define priorities (rank-candidates (set->list existing-candidates)))
@@ -242,32 +256,32 @@
        (announce-vote leader-chan (vote name voting-for))
        (announce-vote leader-chan (vote name (if second-vote second-vote voting-for)))))
 
-  (voter-skeleton name greedy-voting voter-registry candidate-registry))
+  (voter-skeleton name region greedy-voting voter-registry candidate-registry))
 
-(define (make-stubborn-voter name favorite-candidate voter-registry candidate-registry)
+(define (make-stubborn-voter name region favorite-candidate voter-registry candidate-registry)
   (define stubborn-voting
     (λ (existing-candidates available-candidates leader-chan)
        (announce-vote leader-chan (vote name favorite-candidate))))
 
-  (voter-skeleton name stubborn-voting voter-registry candidate-registry))
+  (voter-skeleton name region stubborn-voting voter-registry candidate-registry))
 
-(define (make-sleepy-voter name voter-registry candidate-registry)
+(define (make-sleepy-voter name region voter-registry candidate-registry)
   (define sleepy-voting
     (λ (x y z) '()))
 
-  (voter-skeleton name sleepy-voting voter-registry candidate-registry))
+  (voter-skeleton name region sleepy-voting voter-registry candidate-registry))
 
 (define (announce-vote leader-chan vote)
   (thread (thunk (channel-put leader-chan vote))))
 
-(define (voter-skeleton name voting-procedure voter-registry candidate-registry)
+(define (voter-skeleton name region voting-procedure voter-registry candidate-registry)
   (define receive-candidates-chan (make-channel))
   (define voting-chan (make-channel))
   (thread
     (thunk
       (log-caucus-evt "Voter ~a is registering!" name)
       (channel-put candidate-registry (subscribe receive-candidates-chan))
-      (channel-put voter-registry (voter name voting-chan))
+      (channel-put voter-registry (voter name region voting-chan))
       (let loop ([candidates (set)])
         (sync
           (handle-evt
@@ -284,15 +298,15 @@
                (loop candidates)])))))))
 
 ;; Make the Vote Leader thread
-(define (make-vote-leader candidate-registry voter-registry)
+(define (make-vote-leader region candidate-registry voter-registry manager-chan)
   (define retrieve-candidates-chan (make-channel))
   (define retrieve-voters-chan (make-channel))
   (define voting-chan (make-channel))
   (thread
     (thunk
+      (channel-put manager-chan (declare-leader region))
       (sleep 1) ;; to make sure all other actors get situated first
       (log-caucus-evt "The Vote Leader is ready to run the caucus!")
-      ;; DECISION: once you're subscribed to candidates, begin voting phase
 
       ;; Start a sequence of votes to determine an elected candidate
       ;; (Setof Name) -> Candidate
@@ -300,7 +314,7 @@
         (log-caucus-evt "The Vote Leader is beginning a new round of voting!")
 
         (channel-put candidate-registry (request-msg retrieve-candidates-chan))
-        (channel-put voter-registry (request-msg retrieve-voters-chan))
+        (channel-put voter-registry (request-voters region retrieve-voters-chan))
 
         (define STATES '(SETUP VOTING))
 
@@ -397,8 +411,39 @@
                    votes)))))) 
         
       (define winner (run-caucus (set) (set)))
-      (printf "We have a winner: ~a!\n" (candidate-name winner)))))
+      (log-caucus-evt "We have a winner ~a in region ~a!\n" (candidate-name winner) region)
+      (channel-put region-manager (winner (candidate-name winner)))))
 
+;; Simplification provided by channels: don't need to annotate everything w/region
+(define (make-region-manager main-chan)
+  (define declaration-chan (make-channel))
+  (define results-chan (make-channel))
+  (let loop ([vote-leaders (set)]
+             [caucus-results (hash)])
+    (sync
+      (handle-evt
+        declaration-chan
+        (match-lambda
+          [(declare-leader region leader-chan)
+           (channel-put leader-chan (declare-manager results-chan))
+           (loop (set-add vote-leaders (declare-leader region leader-chan)) caucus-results)]))
+      (handle-evt
+        results-chan
+        (match-lambda
+          [(winner candidate)
+           (define new-results (hash-update caucus-results candidate add1 0))
+           (define num-winners (for/sum ([num-of-votes (in-hash-values caucus-results)]) num-of-votes))
+           (cond
+             [(= num-winners (set-count vote-leaders))
+              (define front-runner (argmax (λ (pair) (cdr pair)) (hash->list caucus-results)))
+              (define their-votes (hash-ref caucus-results (car pair) 0))
+              (cond
+                [(> their-votes (/ num-winners 2))
+                 (log-caucus-evt "The winner of the region is ~a\n!" (car front-runner))
+                 (channel-put main-chan (car front-runner))]
+                [else (loop vote-leaders new-results)])]
+             [else (loop vote-leaders new-results)])]))))
+  declaration-chan)
 
 ;; A subscriber used to print information for testing
 (define (make-dummy-subscriber pub-sub-chan)
@@ -438,9 +483,11 @@
        cand-names)))
 
 ;;;;;;;;;;;; EXECUTION ;;;;;;;;;;;;
+(define main-channel (make-channel))
 
 (define-values (candidate-registration candidate-roll) (make-candidate-registry))
 (define-values (voter-registration voter-roll) (make-voter-registry))
+(define manager-chan (make-region-manager main-channel))
 
 (make-candidate "Bernie" 50 0 candidate-registration)
 (make-candidate "Biden" 25 0 candidate-registration)
@@ -449,38 +496,41 @@
 (make-candidate "Vermin Supreme" 35 0 candidate-registration)
 (make-stubborn-candidate "ZZZ" 0 200000 candidate-registration)
 
-(make-voter "XYZ" (stupid-sort "Vermin Supreme") voter-registration candidate-roll)
-(make-voter "FOO" (stupid-sort "Vermin Supreme") voter-registration candidate-roll)
-(make-voter "BAR" (stupid-sort "Vermin Supreme") voter-registration candidate-roll)
-(make-voter "BAZ" (stupid-sort "Vermin Supreme") voter-registration candidate-roll)
-(make-voter "012" (stupid-sort "Biden") voter-registration candidate-roll)
-(make-voter "123" (stupid-sort "Biden") voter-registration candidate-roll)
-(make-voter "234" (stupid-sort "Biden") voter-registration candidate-roll)
-(make-greedy-voter "ABC" (stupid-sort "Bernie" "Tulsi") voter-registration candidate-roll)
-(make-greedy-voter "DEF" (stupid-sort "Bernie" "Tulsi") voter-registration candidate-roll)
-(make-greedy-voter "GHI" (stupid-sort "Bernie" "Tulsi") voter-registration candidate-roll)
-(make-greedy-voter "JKL" (stupid-sort "Biden" "Tulsi") voter-registration candidate-roll)
-(make-greedy-voter "MNO" (stupid-sort "Biden" "Tulsi") voter-registration candidate-roll)
-(make-greedy-voter "PQR" (stupid-sort "Biden" "Tulsi") voter-registration candidate-roll)
-(make-stubborn-voter "345" "Tulsi" voter-registration candidate-roll)
-(make-stubborn-voter "456" "ZZZ" voter-registration candidate-roll)
-(make-stubborn-voter "567" "ZZZ" voter-registration candidate-roll)
-(make-stubborn-voter "678" "ZZZ" voter-registration candidate-roll)
-(make-stubborn-voter "789" "ZZZ" voter-registration candidate-roll)
-(make-stubborn-voter "457" "ZZZ" voter-registration candidate-roll)
-(make-stubborn-voter "568" "ZZZ" voter-registration candidate-roll)
-(make-stubborn-voter "679" "ZZZ" voter-registration candidate-roll)
-(make-stubborn-voter "790" "ZZZ" voter-registration candidate-roll)
+(make-voter "XYZ" "Region1" (stupid-sort "Vermin Supreme") voter-registration candidate-roll)
+(make-voter "FOO" "Region1" (stupid-sort "Vermin Supreme") voter-registration candidate-roll)
+(make-voter "BAR" "Region1" (stupid-sort "Vermin Supreme") voter-registration candidate-roll)
+(make-voter "BAZ" "Region1" (stupid-sort "Vermin Supreme") voter-registration candidate-roll)
+(make-voter "012" "Region1" (stupid-sort "Biden") voter-registration candidate-roll)
+(make-voter "123" "Region1" (stupid-sort "Biden") voter-registration candidate-roll)
+(make-voter "234" "Region1" (stupid-sort "Biden") voter-registration candidate-roll)
+(make-greedy-voter "ABC" "Region1" (stupid-sort "Bernie" "Tulsi") voter-registration candidate-roll)
+(make-greedy-voter "DEF" "Region1" (stupid-sort "Bernie" "Tulsi") voter-registration candidate-roll)
+(make-greedy-voter "GHI" "Region1" (stupid-sort "Bernie" "Tulsi") voter-registration candidate-roll)
+(make-greedy-voter "JKL" "Region1" (stupid-sort "Biden" "Tulsi") voter-registration candidate-roll)
+(make-greedy-voter "MNO" "Region1" (stupid-sort "Biden" "Tulsi") voter-registration candidate-roll)
+(make-greedy-voter "PQR" "Region1" (stupid-sort "Biden" "Tulsi") voter-registration candidate-roll)
+(make-stubborn-voter "345" "Region1" "Tulsi" voter-registration candidate-roll)
+(make-stubborn-voter "456" "Region1" "ZZZ" voter-registration candidate-roll)
+(make-stubborn-voter "567" "Region1" "ZZZ" voter-registration candidate-roll)
+(make-stubborn-voter "678" "Region1" "ZZZ" voter-registration candidate-roll)
+(make-stubborn-voter "789" "Region1" "ZZZ" voter-registration candidate-roll)
+(make-stubborn-voter "457" "Region1" "ZZZ" voter-registration candidate-roll)
+(make-stubborn-voter "568" "Region1" "ZZZ" voter-registration candidate-roll)
+(make-stubborn-voter "679" "Region1" "ZZZ" voter-registration candidate-roll)
+(make-stubborn-voter "790" "Region1" "ZZZ" voter-registration candidate-roll)
 
-(make-sleepy-voter "0" voter-registration candidate-roll)
-(make-sleepy-voter "1" voter-registration candidate-roll)
-(make-sleepy-voter "2" voter-registration candidate-roll)
-(make-sleepy-voter "3" voter-registration candidate-roll)
-(make-sleepy-voter "4" voter-registration candidate-roll)
-(make-sleepy-voter "5" voter-registration candidate-roll)
-(make-sleepy-voter "6" voter-registration candidate-roll)
-(make-sleepy-voter "7" voter-registration candidate-roll)
-(make-sleepy-voter "8" voter-registration candidate-roll)
-(make-sleepy-voter "9" voter-registration candidate-roll)
+(make-sleepy-voter "0" "Region1" voter-registration candidate-roll)
+(make-sleepy-voter "1" "Region1" voter-registration candidate-roll)
+(make-sleepy-voter "2" "Region1" voter-registration candidate-roll)
+(make-sleepy-voter "3" "Region1" voter-registration candidate-roll)
+(make-sleepy-voter "4" "Region1" voter-registration candidate-roll)
+(make-sleepy-voter "5" "Region1" voter-registration candidate-roll)
+(make-sleepy-voter "6" "Region1" voter-registration candidate-roll)
+(make-sleepy-voter "7" "Region1" voter-registration candidate-roll)
+(make-sleepy-voter "8" "Region1" voter-registration candidate-roll)
+(make-sleepy-voter "9" "Region1" voter-registration candidate-roll)
 
-(thread-wait (make-vote-leader candidate-roll voter-roll))
+(make-vote-leader candidate-roll voter-roll manager-chan)
+
+(define msg (channel-get main-channel))
+(printf "We have our winner! ~a\n" msg)
