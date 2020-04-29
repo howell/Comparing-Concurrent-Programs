@@ -49,9 +49,7 @@
 (struct all-voters (voters) #:transparent)
 
 ;;;; ASSUMPTIONS ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; 5. Voters never leave early (without an announcement)
 ;; 6. Voters never try joining late (how is this even expressible...?) --> Hard to get right due to timing  (vote only after first round?)
-;; 7. Voters never try to vote if they haven't registered (also not expressible...?) --> Handled by voter registry
 ;; 
 
 ;;;; FEATURES ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -352,20 +350,6 @@
                           [voting-record (hash)]
                           [votes (hash)])
 
-          ;; Remove a voter's vote and ban them from voting in the future
-          ;; Name Name Hash Hash Hash Loop -> C
-          ;; INVARIANT: Voter has voted before and their voter information is stored in the accumulators
-          (define (blacklist-repeat-voter name)
-            (define shrunk-votes (hash-update votes (hash-ref voting-record name) sub1))
-            (define shrunk-whitelist (hash-remove whitelist name))
-            (define shrunk-voting-record (hash-remove voting-record name))
-            (voting-loop shrunk-whitelist shrunk-voting-record shrunk-votes))
-
-          (define (blacklist-voter name)
-            (voting-loop (hash-remove whitelist name) voting-record votes))
-            
-          ;; TODO ASSUMPTION (= (hash-count voting-record) num-votes)
-
           ;; Determine winner if one candidate has received majority of votes, otherwise begin next round of voting
           (define (count-votes whitelist voting-record votes)
             (define front-runner (argmax (λ (cand) (hash-ref votes (candidate-name cand) 0)) (set->list candidates)))
@@ -407,40 +391,10 @@
             (handle-evt
               vote-timeout
               (λ (_) 
-                 (printf "The sizes, whitelist: ~a, voting record: ~a\n" (hash-count whitelist) (hash-count voting-record))
-                 (define yeet (make-immutable-hash (filter (λ (wl-pair) (hash-has-key? voting-record (car wl-pair))) (hash->list whitelist))))
-                 (printf "size of the yeet: ~a\n" (hash-count yeet))
                  (conclude-vote?
                    (make-immutable-hash (filter (λ (wl-pair) (hash-has-key? voting-record (car wl-pair))) (hash->list whitelist)))
                    voting-record
                    votes)))))) 
-      #|(handle-evt
-              vote-timeout
-              #f))))|#
-
-
-      #|
-          (define num-votes (for/sum ([votes-for-cand (in-hash-values votes)]) votes-for-cand))
-          (cond
-            [(= num-votes (hash-count whitelist))
-             (count-votes num-votes)]
-            [else
-              (sync
-                (handle-evt
-                  voting-chan
-                  (match-lambda
-                    [(vote name candidate)
-                     (cond
-                       [(not (hash-has-key? whitelist name))
-                        (voting-loop whitelist voting-record votes)]
-                       [(hash-has-key? voting-record name)
-                        (blacklist-repeat-voter name)]
-                       [(andmap (λ (cand) (not (string=? candidate (candidate-name cand)))) (set->list candidates))
-                        (blacklist-voter name)]
-                       [else
-                        (log-caucus-evt "Voter ~a has voted for Candidate ~a!" name candidate)
-                        (voting-loop whitelist (hash-set voting-record name candidate) (hash-update votes candidate add1 0))])])))])))
-  |#
         
       (define winner (run-caucus (set) (set)))
       (printf "We have a winner: ~a!\n" (candidate-name winner)))))
@@ -518,7 +472,6 @@
 (make-stubborn-voter "679" "ZZZ" voter-registration candidate-roll)
 (make-stubborn-voter "790" "ZZZ" voter-registration candidate-roll)
 
-#|
 (make-sleepy-voter "0" voter-registration candidate-roll)
 (make-sleepy-voter "1" voter-registration candidate-roll)
 (make-sleepy-voter "2" voter-registration candidate-roll)
@@ -529,6 +482,5 @@
 (make-sleepy-voter "7" voter-registration candidate-roll)
 (make-sleepy-voter "8" voter-registration candidate-roll)
 (make-sleepy-voter "9" voter-registration candidate-roll)
-|#
 
 (thread-wait (make-vote-leader candidate-roll voter-roll))
