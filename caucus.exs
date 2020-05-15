@@ -1,22 +1,45 @@
+########################### Conversations ###########################
+### Structs/Messages ###
+# a Name is a String
+# a TaxRate is a Number
+# a PID is a Process ID
+#
+#
+# 1. a Candidate is a %Candidate{name: Name, tax_rate: TaxRate}
+# 2. a CandidateRegistry is a %CandidateRegistry{candidates: [Setof Candidate]}
+# 3. a Voter is a %Voter{name: Name, pid: PID}
+# 4. a VoterRegistry is a %VoterRegistry{voters: [Setof Voter]}
+# 5. a Subscription is a {:subscribe, PID}
+# 6. a VoteRequest is a {:vote_request, [Setof Candidate], PID}
+# 7. a Vote is a {:vote, Name}
+
+# Candidates in the Caucus
 defmodule Candidate do
   defstruct [:name, :tax_rate]
 
+  # Notify the Candidate Registry of a new Candidate
+  # Name TaxRate PID -> PID
   def spawn(name, tax_rate, cand_registry) do
     spawn fn -> send cand_registry, %Candidate{name: name, tax_rate: tax_rate} end
   end
 end
 
+# The warehouse of all Candidates: a PubSub actor
 defmodule CandidateRegistry do
   defstruct [:candidates]
 
+  # Start the actor
+  # -> PID
   def spawn do
     spawn fn -> loop(MapSet.new(), MapSet.new()) end 
   end
 
+  # Listen to messages from other actors and respond accordingly
+  # [Setof Candidate] [Setof PID] -> void
   defp loop(candidates, subscribers) do
     receive do
       %Candidate{name: n, tax_rate: tr} -> 
-        IO.puts n
+        IO.puts "Candidate #{n} has registered!"
         new_candidates = MapSet.put(candidates, %Candidate{name: n, tax_rate: tr})
         Enum.each(subscribers, fn s -> send s, %CandidateRegistry{candidates: new_candidates} end)
         loop(new_candidates, subscribers)
@@ -28,43 +51,53 @@ defmodule CandidateRegistry do
   end
 end
 
+# A Voter that participates in the Caucus
 defmodule Voter do
   defstruct [:name, :pid]
 
+  # Initialize a new voter
+  # Name PID PID ([Setof Candidate] -> [Setof Candidate]) -> PID
   def spawn(name, voter_registry, cand_registry, voting_fun) do
     spawn fn -> 
       send voter_registry, %Voter{name: name, pid: self()}
       send cand_registry, {:subscribe, self()}
-      loop(MapSet.new(), voting_fun)
+      loop(name, MapSet.new(), voting_fun)
     end
   end
 
-  defp loop(candidates, voting_fun) do
+  # Listen to new messages and respond accordingly
+  # Name [Setof Candidate] ([Setof Candidate] -> [Setof Candidate]) -> void
+  defp loop(name, candidates, voting_fun) do
     receive do
       %CandidateRegistry{candidates: new_candidates} -> 
-        IO.puts "Candidates received! #{inspect new_candidates}"
-        loop(new_candidates, voting_fun)
+        IO.puts "Voter #{name} has received candidates! #{inspect new_candidates}"
+        loop(name, new_candidates, voting_fun)
       {:vote_request, eligible_candidates, vote_leader} ->
         sorted_candidates = voting_fun.(candidates)
-        IO.puts "A voter is voting with #{inspect(sorted_candidates)}"
-        %Candidate{name: name, tax_rate: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) end)
-        send vote_leader, {:vote, name}
-        loop(candidates, voting_fun)
+        %Candidate{name: cand_name, tax_rate: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) end)
+        IO.puts "Voter #{name} is voting for #{cand_name}!"
+        send vote_leader, {:vote, cand_name}
+        loop(name, candidates, voting_fun)
     end
   end
 end
 
+# The warehouse of all voters: a PubSub actor
 defmodule VoterRegistry do
   defstruct [:voters]
 
+  # initialize a new VoterRegistry
+  # -> PID
   def spawn do
     spawn fn -> loop(MapSet.new(), MapSet.new()) end
   end
 
+  # Listen to messages and respond accordingly
+  # [Setof Voter] [Setof PID] -> void
   defp loop(voters, subscribers) do
     receive do
       %Voter{name: name, pid: voter_pid} -> 
-        IO.puts name
+        IO.puts "Voter #{name} has registered!"
         loop(MapSet.put(voters, %Voter{name: name, pid: voter_pid}), subscribers)
       {:subscribe, pid} ->
         IO.puts "New subscriber to the voter registry: #{inspect pid}!"
@@ -74,7 +107,10 @@ defmodule VoterRegistry do
   end
 end
 
+# The actor that manages voting and elects a winner
 defmodule VoteLeader do
+  # initialize the VoteLeader
+  # PID PID -> PID
   def spawn(voter_registry, candidate_registry) do
     spawn fn -> 
       Process.sleep(1000)
@@ -84,10 +120,10 @@ defmodule VoteLeader do
     end
   end
 
+  # Gather the information necessary to start voting and issue votes to voters
+  # [Setof Voter] [Setof Candidate] -> void
   defp setup_voting(voters, candidates) do
     if !(Enum.empty?(voters) || Enum.empty?(candidates)) do
-      IO.puts "WWOWOWOWO"
-      IO.puts inspect(candidates)
       issue_votes(voters, candidates)
       vote_loop(voters, candidates, %{})
     else
@@ -102,11 +138,15 @@ defmodule VoteLeader do
     end
   end
 
+  # Request a vote from all voters with the current eligible candidates
+  # [Setof Voter] [Setof Candidate] -> void
   defp issue_votes(voters, candidates) do
     IO.puts "Issuing votes!"
     Enum.each(voters, fn %Voter{name: _, pid: pid} -> send pid, {:vote_request, candidates, self()} end)
   end
 
+  # Receive votes from voters and elect a winner if possible
+  # [Setof Voter] [Setof Candidate] [Mapof Name -> Number] -> void
   defp vote_loop(voters, candidates, tally) do
     num_votes = Enum.reduce(tally, 0, fn {_, count}, acc -> acc + count end)
     if Enum.count(voters) == num_votes do
