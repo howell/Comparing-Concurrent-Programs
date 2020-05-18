@@ -125,7 +125,7 @@ defmodule VoteLeader do
   defp setup_voting(voters, candidates) do
     if !(Enum.empty?(voters) || Enum.empty?(candidates)) do
       issue_votes(voters, candidates)
-      vote_loop(voters, candidates, %{})
+      vote_loop(voters, candidates, Enum.reduce(candidates, %{}, fn cand, acc -> Map.put(acc, cand.name, cand) end), %{})
     else
       receive do
         %VoterRegistry{voters: new_voters} ->
@@ -146,8 +146,8 @@ defmodule VoteLeader do
   end
 
   # Receive votes from voters and elect a winner if possible
-  # [Setof Voter] [Setof Candidate] [Mapof Name -> Number] -> void
-  defp vote_loop(voters, candidates, tally) do
+  # [Setof Voter] [Setof Candidate] [Mapof Name -> Candidate] [Mapof Name -> Number] -> void
+  defp vote_loop(voters, candidates, cand_names, tally) do
     num_votes = Enum.reduce(tally, 0, fn {_, count}, acc -> acc + count end)
     if Enum.count(voters) == num_votes do
       {frontrunner, their_votes} = Enum.max(tally, fn {_, count1}, {_, count2} -> count1 >= count2 end)
@@ -156,11 +156,12 @@ defmodule VoteLeader do
       else
         {loser, _} = Enum.min(tally, fn {_, count1}, {_, count2} -> count1 <= count2 end)
         IO.puts "Our loser is #{loser}!"
-        setup_voting(voters, MapSet.new(Enum.reject(candidates, fn %Candidate{name: n, tax_rate: _} -> n == loser end)))
+
+        setup_voting(voters, MapSet.delete(candidates, cand_names[loser]))
       end
     else
       receive do
-        {:vote, cand_name} -> vote_loop(voters, candidates, Map.update(tally, cand_name, 1, &(&1 + 1)))
+        {:vote, cand_name} -> vote_loop(voters, candidates, cand_names, Map.update(tally, cand_name, 1, &(&1 + 1)))
       end
     end
   end
@@ -172,7 +173,6 @@ defmodule StupidSort do
       candidate? = Enum.find(candidates, fn(%Candidate{name: n, tax_rate: tr}) -> n == cand_name end)
 
       if candidate? do
-        # no idea if this is correct
         [candidate? | Enum.reject(candidates, fn(%Candidate{name: n, tax_rate: _}) -> n == cand_name end)]
       else
         candidates
