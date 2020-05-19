@@ -13,6 +13,17 @@
 # 6. a VoteRequest is a {:vote_request, [Setof Candidate], PID}
 # 7. a Vote is a {:vote, Name}
 
+###### TODOS ######
+# 1. stubborn candidates
+# 2. candidates that drop out
+# 3. late joining voter
+# 4. greedy voter
+# 5. stubborn voter
+# 6. early leaving voter
+# 7. unresponsive voter
+# 8. crashing voter?
+# 9. unregistered voter?
+
 # Candidates in the Caucus
 defmodule Candidate do
   defstruct [:name, :tax_rate]
