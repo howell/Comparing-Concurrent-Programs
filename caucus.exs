@@ -109,7 +109,9 @@ defmodule VoterRegistry do
     receive do
       %Voter{name: name, pid: voter_pid} -> 
         IO.puts "Voter #{name} has registered!"
-        loop(MapSet.put(voters, %Voter{name: name, pid: voter_pid}), subscribers)
+        new_voters = MapSet.put(voters, %Voter{name: name, pid: voter_pid})
+        Enum.each(subscribers, fn s -> send s, %VoterRegistry{voters: new_voters} end)
+        loop(new_voters, subscribers)
       {:subscribe, pid} ->
         IO.puts "New subscriber to the voter registry: #{inspect pid}!"
         send pid, %VoterRegistry{voters: voters}
