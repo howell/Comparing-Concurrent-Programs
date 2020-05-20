@@ -226,9 +226,10 @@ Voter.spawn("118", voter_registry, cand_registry, StupidSort.generate("Bernie"))
 Voter.spawn("108", voter_registry, cand_registry, StupidSort.generate("Bernie"))
 Voter.spawn("107", voter_registry, cand_registry, StupidSort.generate("Bernie"))
 
-VoteLeader.spawn(voter_registry, cand_registry)
+pid = VoteLeader.spawn(voter_registry, cand_registry)
+ref = Process.monitor(pid)
 
-# Question: when does the program decide to sleep? What's the order of events that causes the program to terminate before the voters receive their msg?
-
-Process.sleep(10000)
+receive do
+  {:DOWN, ^ref, _, _, _} -> :ok
+end
 
