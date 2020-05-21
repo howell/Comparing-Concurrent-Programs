@@ -152,31 +152,32 @@ defmodule VoteLeader do
     spawn fn -> 
       Process.sleep(1000)
       send voter_registry, {:subscribe, self()}
-      setup_voting(MapSet.new(), candidate_registry)
+      setup_voting(MapSet.new(), MapSet.new(), candidate_registry)
     end
   end
 
   # Query for any prerequisite data for running a round of voting
   # [Setof Voter] PID -> void
-  defp setup_voting(voters, candidate_registry) do
+  defp setup_voting(voters, blacklist, candidate_registry) do
     send candidate_registry, {:msg, self()}
-    prepare_voting(voters, MapSet.new(), candidate_registry)
+    prepare_voting(voters, MapSet.new(), blacklist, candidate_registry)
   end
 
   # Gather the information necessary to start voting and issue votes to voters
   # [Setof Voter] [Setof Candidate] PID -> void
-  defp prepare_voting(voters, candidates, candidate_registry) do
+  defp prepare_voting(voters, candidates, blacklist, candidate_registry) do
     if !(Enum.empty?(voters) || Enum.empty?(candidates)) do
-      issue_votes(voters, candidates)
-      vote_loop(voters, candidates, Enum.reduce(candidates, %{}, fn cand, acc -> Map.put(acc, cand.name, cand) end), %{}, candidate_registry)
+      valid_candidates = MapSet.difference(candidates, blacklist)
+      issue_votes(voters, valid_candidates)
+      vote_loop(voters, valid_candidates, Enum.reduce(valid_candidates, %{}, fn cand, acc -> Map.put(acc, cand.name, cand) end), blacklist, %{}, candidate_registry)
     else
       receive do
         %VoterRegistry{voters: new_voters} ->
           IO.puts "Vote leader received voters! #{inspect new_voters}"
-          setup_voting(new_voters, candidates)
+          prepare_voting(new_voters, candidates, blacklist, candidate_registry)
         %CandidateRegistry{candidates: new_candidates} ->
           IO.puts "Vote Leader received candidates! #{inspect new_candidates}"
-          setup_voting(voters, new_candidates)
+          prepare_voting(voters, new_candidates, blacklist, candidate_registry)
       end
     end
   end
@@ -188,13 +189,9 @@ defmodule VoteLeader do
     Enum.each(voters, fn %Voter{name: _, pid: pid} -> send pid, {:vote_request, candidates, self()} end)
   end
 
-  # TODO
-  # 1. implement a blacklist (or whatever mechanism) for dropping candidates and taking intersection
-  # 2. loop and correct args for `setup_voting` calls
-
   # Receive votes from voters and elect a winner if possible
   # [Setof Voter] [Setof Candidate] [Mapof Name -> Candidate] [Mapof Name -> Number] PID -> void
-  defp vote_loop(voters, candidates, cand_names, tally, cand_registry) do
+  defp vote_loop(voters, candidates, cand_names, blacklist, tally, cand_registry) do
     num_votes = Enum.reduce(tally, 0, fn {_, count}, acc -> acc + count end)
     if Enum.count(voters) == num_votes do
       {frontrunner, their_votes} = Enum.max(tally, fn {_, count1}, {_, count2} -> count1 >= count2 end)
@@ -205,11 +202,11 @@ defmodule VoteLeader do
         Enum.each(candidates, fn %Candidate{name: _, tax_rate: _, pid: pid} -> send pid, tally end)
         IO.puts "Our loser is #{loser}!"
 
-        setup_voting(voters, MapSet.delete(candidates, cand_names[loser]))
+        setup_voting(voters, MapSet.put(blacklist, cand_names[loser]), cand_registry)
       end
     else
       receive do
-        {:vote, cand_name} -> vote_loop(voters, candidates, cand_names, Map.update(tally, cand_name, 1, &(&1 + 1)))
+        {:vote, cand_name} -> vote_loop(voters, candidates, cand_names, blacklist, Map.update(tally, cand_name, 1, &(&1 + 1)), cand_registry)
       end
     end
   end
@@ -246,9 +243,9 @@ end
 
 cand_registry = CandidateRegistry.spawn
 
-Candidate.spawn("Bernie", 50, cand_registry)
-Candidate.spawn("Biden", 25, cand_registry)
-Candidate.spawn("Tulsi", 10, cand_registry)
+Candidate.spawn("Bernie", 50, 10000, cand_registry)
+Candidate.spawn("Biden", 25, 10000, cand_registry)
+Candidate.spawn("Tulsi", 10, 10000, cand_registry)
 
 voter_registry = VoterRegistry.spawn
 
