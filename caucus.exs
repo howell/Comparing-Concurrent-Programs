@@ -44,7 +44,7 @@ defmodule Candidate do
     receive do
       {:ballot, ballot} -> 
         if ballot[name] < threshold do
-          send cand_registry, {:drop_out, %Candidate{name: name, tax_rate: tax_rate, pid: self()}}
+          send cand_registry, {:remove, %Candidate{name: name, tax_rate: tax_rate, pid: self()}}
         else
           loop(name, tax_rate, threshold, cand_registry)
         end
@@ -52,37 +52,38 @@ defmodule Candidate do
   end
 end
 
-# The warehouse of all Candidates: a PubSub actor
-defmodule CandidateRegistry do
-  defstruct [:candidates]
+defmodule AbstractRegistry do
+  defstruct [:values, :type]
 
-  # Start the actor
-  # -> PID
-  def spawn do
-    spawn fn -> loop(MapSet.new(), MapSet.new()) end 
+  # initialize a new AbstractRegistry
+  def create(type) do
+    IO.puts "We exist with type #{inspect type}!"
+    spawn fn -> loop(type, MapSet.new(), MapSet.new()) end
   end
 
-  # Listen to messages from other actors and respond accordingly
-  # [Setof Candidate] [Setof PID] -> void
-  defp loop(candidates, subscribers) do
+  def loop(type, values, subscribers) do
     receive do
-      %Candidate{name: n, tax_rate: tr, pid: pid} -> 
-        IO.puts "Candidate #{n} has registered!"
-        new_candidates = MapSet.put(candidates, %Candidate{name: n, tax_rate: tr, pid: pid})
-        Enum.each(subscribers, fn s -> send s, %CandidateRegistry{candidates: new_candidates} end)
-        loop(new_candidates, subscribers)
-      {:subscribe, pid} ->
-        IO.puts "Subscriber #{inspect pid} has subscribed!"
-        send pid, %CandidateRegistry{candidates: candidates}
-        loop(candidates, MapSet.put(subscribers, pid))
+      %^type{} = new_val ->
+        IO.puts "New value: #{inspect new_val} for #{inspect type}!"
+        new_values = MapSet.put(values, new_val)
+        Enum.each(subscribers, fn s -> send s, the_package(values, type) end)
+        loop(type, new_values, subscribers)
+      {:subscribe, pid} -> 
+        IO.puts "We have a new subscriber! #{inspect pid} for #{inspect type}!"
+        send pid, the_package(values, type)
+        loop(type, values, MapSet.put(subscribers, pid))
       {:msg, pid} ->
         IO.puts "Process #{inspect pid} is requesting a message!"
-        send pid, %CandidateRegistry{candidates: candidates}
-        loop(candidates, subscribers)
-      {:drop_out, cand} ->
-        IO.puts "Candidate #{cand.name} is dropping out!"
-        loop(MapSet.delete(candidates, cand), subscribers)
+        send pid, the_package(values, type)
+        loop(type, values, subscribers)
+      {:remove, val} ->
+        IO.puts "Value #{inspect val} is removing itself from the Registry!"
+        loop(type, MapSet.delete(values, val), subscribers)
     end
+  end
+
+  def the_package(values, type) do
+    %AbstractRegistry{values: values, type: type}
   end
 end
 
@@ -104,7 +105,7 @@ defmodule Voter do
   # Name [Setof Candidate] ([Setof Candidate] -> [Setof Candidate]) -> void
   defp loop(name, candidates, voting_fun) do
     receive do
-      %CandidateRegistry{candidates: new_candidates} -> 
+      %AbstractRegistry{values: new_candidates, type: Candidate} -> 
         IO.puts "Voter #{name} has received candidates! #{inspect new_candidates}"
         loop(name, new_candidates, voting_fun)
       {:vote_request, eligible_candidates, vote_leader} ->
@@ -113,33 +114,6 @@ defmodule Voter do
         IO.puts "Voter #{name} is voting for #{cand_name}!"
         send vote_leader, {:vote, cand_name}
         loop(name, candidates, voting_fun)
-    end
-  end
-end
-
-# The warehouse of all voters: a PubSub actor
-defmodule VoterRegistry do
-  defstruct [:voters]
-
-  # initialize a new VoterRegistry
-  # -> PID
-  def spawn do
-    spawn fn -> loop(MapSet.new(), MapSet.new()) end
-  end
-
-  # Listen to messages and respond accordingly
-  # [Setof Voter] [Setof PID] -> void
-  defp loop(voters, subscribers) do
-    receive do
-      %Voter{name: name, pid: voter_pid} -> 
-        IO.puts "Voter #{name} has registered!"
-        new_voters = MapSet.put(voters, %Voter{name: name, pid: voter_pid})
-        Enum.each(subscribers, fn s -> send s, %VoterRegistry{voters: new_voters} end)
-        loop(new_voters, subscribers)
-      {:subscribe, pid} ->
-        IO.puts "New subscriber to the voter registry: #{inspect pid}!"
-        send pid, %VoterRegistry{voters: voters}
-        loop(voters, MapSet.put(subscribers, pid))
     end
   end
 end
@@ -172,10 +146,10 @@ defmodule VoteLeader do
       vote_loop(voters, valid_candidates, Enum.reduce(valid_candidates, %{}, fn cand, acc -> Map.put(acc, cand.name, cand) end), blacklist, %{}, candidate_registry)
     else
       receive do
-        %VoterRegistry{voters: new_voters} ->
+        %AbstractRegistry{values: new_voters, type: Voter} ->
           IO.puts "Vote leader received voters! #{inspect new_voters}"
           prepare_voting(new_voters, candidates, blacklist, candidate_registry)
-        %CandidateRegistry{candidates: new_candidates} ->
+        %AbstractRegistry{values: new_candidates, type: Candidate} ->
           IO.puts "Vote Leader received candidates! #{inspect new_candidates}"
           prepare_voting(voters, new_candidates, blacklist, candidate_registry)
       end
@@ -194,6 +168,7 @@ defmodule VoteLeader do
   defp vote_loop(voters, candidates, cand_names, blacklist, tally, cand_registry) do
     num_votes = Enum.reduce(tally, 0, fn {_, count}, acc -> acc + count end)
     if Enum.count(voters) == num_votes do
+      IO.puts "The final tally is: #{inspect tally}!"
       {frontrunner, their_votes} = Enum.max(tally, fn {_, count1}, {_, count2} -> count1 >= count2 end)
       if their_votes > (num_votes / 2) do
         IO.puts "And the winner is: #{frontrunner}!"
@@ -216,7 +191,6 @@ defmodule StupidSort do
   def generate(cand_name) do
     fn candidates ->
       candidate? = Enum.find(candidates, fn(%Candidate{name: n, tax_rate: _, pid: _}) -> n == cand_name end)
-
       if candidate? do
         [candidate? | Enum.reject(candidates, fn(%Candidate{name: n, tax_rate: _, pid: _}) -> n == cand_name end)]
       else
@@ -241,7 +215,8 @@ defmodule MockSubscriber do
   end
 end
 
-cand_registry = CandidateRegistry.spawn
+# cand_registry = CandidateRegistry.spawn
+cand_registry = AbstractRegistry.create(Candidate)
 
 Candidate.spawn("Bernie", 50, 0, cand_registry)
 Candidate.spawn("Biden", 25, 0, cand_registry)
@@ -253,7 +228,8 @@ Candidate.spawn("4", 10, 0, cand_registry)
 Candidate.spawn("5", 10, 0, cand_registry)
 Candidate.spawn("6", 10, 0, cand_registry)
 
-voter_registry = VoterRegistry.spawn
+# voter_registry = VoterRegistry.spawn
+voter_registry = AbstractRegistry.create(Voter)
 
 Voter.spawn("ABC", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
 Voter.spawn("DEF", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
