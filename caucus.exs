@@ -52,6 +52,7 @@ defmodule Candidate do
   end
 end
 
+# A pub/sub server for some type of Struct
 defmodule AbstractRegistry do
   defstruct [:values, :type]
 
@@ -63,19 +64,23 @@ defmodule AbstractRegistry do
 
   def loop(type, values, subscribers) do
     receive do
+      # Receiving a struct of the module Type, update all current subscribers with new data
       %^type{} = new_val ->
         IO.puts "New value: #{inspect new_val} for #{inspect type}!"
         new_values = MapSet.put(values, new_val)
         Enum.each(subscribers, fn s -> send s, the_package(values, type) end)
         loop(type, new_values, subscribers)
+      # Add a new subscriber to the list and update them with the latest
       {:subscribe, pid} -> 
         IO.puts "We have a new subscriber! #{inspect pid} for #{inspect type}!"
         send pid, the_package(values, type)
         loop(type, values, MapSet.put(subscribers, pid))
+      # Send a single-instance message to a process of the most recent snapshot of data
       {:msg, pid} ->
         IO.puts "Process #{inspect pid} is requesting a message!"
         send pid, the_package(values, type)
         loop(type, values, subscribers)
+      # Remove a piece of data from the published data
       {:remove, val} ->
         IO.puts "Value #{inspect val} is removing itself from the Registry!"
         loop(type, MapSet.delete(values, val), subscribers)
@@ -215,7 +220,6 @@ defmodule MockSubscriber do
   end
 end
 
-# cand_registry = CandidateRegistry.spawn
 cand_registry = AbstractRegistry.create(Candidate)
 
 Candidate.spawn("Bernie", 50, 0, cand_registry)
@@ -228,7 +232,6 @@ Candidate.spawn("4", 10, 0, cand_registry)
 Candidate.spawn("5", 10, 0, cand_registry)
 Candidate.spawn("6", 10, 0, cand_registry)
 
-# voter_registry = VoterRegistry.spawn
 voter_registry = AbstractRegistry.create(Voter)
 
 Voter.spawn("ABC", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
