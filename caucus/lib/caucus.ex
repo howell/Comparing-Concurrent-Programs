@@ -132,7 +132,7 @@ defmodule Voter do
     sorted_candidates = voting_fun.(all_candidates)
     %Candidate{name: voting_for, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) end)
     IO.puts "Voter #{name} is voting for #{voting_for}!"
-    send vote_leader, {:vote, voting_for}
+    send vote_leader, {:vote, name, voting_for}
     loop(name, all_candidates, voting_fun)
   end
 end
@@ -148,12 +148,12 @@ defmodule GreedyVoter do
     %Candidate{name: voting_for, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) end)
     %Candidate{name: second_vote, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) && cand.name != voting_for end)
     IO.puts "Greedy voter #{name} is voting for multiple candidates!"
-    send vote_leader, {:vote, voting_for}
-    send(vote_leader, if (second_vote) do
+    send vote_leader, {:vote, name, voting_for}
+    send(vote_leader, {:vote, name, if (second_vote) do
                         second_vote
                       else
                         voting_for
-                      end)
+                      end})
   end
 end
 
@@ -183,7 +183,8 @@ defmodule VoteLeader do
       valid_candidates = MapSet.difference(candidates, blacklist)
       issue_votes(voters, valid_candidates)
       initial_tally = Enum.reduce(valid_candidates, %{}, fn cand, acc -> Map.put(acc, cand.name, 0) end)
-      vote_loop(voters, valid_candidates, Enum.reduce(valid_candidates, %{}, fn cand, acc -> Map.put(acc, cand.name, cand) end), blacklist, initial_tally, candidate_registry)
+      whitelisted_voters = Enum.reduce(voters, %{}, fn voter, acc -> Map.put(acc, voter.name, voter) end)
+      vote_loop(voters, valid_candidates, Enum.reduce(valid_candidates, %{}, fn cand, acc -> Map.put(acc, cand.name, cand) end), blacklist, initial_tally, %{}, whitelisted_voters, candidate_registry)
     else
       receive do
         %AbstractRegistry{values: new_voters, type: VoterStruct} ->
@@ -205,10 +206,9 @@ defmodule VoteLeader do
 
   # Receive votes from voters and elect a winner if possible
   # [Setof Voter] [Setof Candidate] [Mapof Name -> Candidate] [Mapof Name -> Number] PID -> void
-  defp vote_loop(voters, candidates, cand_names, blacklist, tally, cand_registry) do
+  defp vote_loop(voters, candidates, cand_names, blacklist, tally, voting_record, voter_whitelist, cand_registry) do
     num_votes = Enum.reduce(tally, 0, fn {_, count}, acc -> acc + count end)
     if Enum.count(voters) == num_votes do
-      IO.puts "The final tally is: #{inspect tally}!"
       {frontrunner, their_votes} = Enum.max(tally, fn {_, count1}, {_, count2} -> count1 >= count2 end)
       if their_votes > (num_votes / 2) do
         IO.puts "And the winner is: #{frontrunner}!"
@@ -220,10 +220,29 @@ defmodule VoteLeader do
         setup_voting(voters, MapSet.put(blacklist, cand_names[loser]), cand_registry)
       end
     else
+      # TODO I suspect the bug is that num_votes is LARGER than size of voters, because updating the tally is not working correctly.
       receive do
-        {:vote, cand_name} -> 
-          IO.puts "Vote received for candidate #{inspect cand_name}!"
-          vote_loop(voters, candidates, cand_names, blacklist, Map.update(tally, cand_name, 1, &(&1 + 1)), cand_registry)
+        {:vote, voter_name, cand_name} -> 
+          if (Map.has_key?(voting_record, voter_name)) do
+            vote_loop(MapSet.delete(voters, voter_whitelist[voter_name]),
+              candidates,
+              cand_names,
+              blacklist,
+              Map.update(tally, voting_record[voter_name], 1, &(&1 - 1)),
+              Map.delete(voting_record, voter_name),
+              Map.delete(voter_whitelist, voter_name),
+              cand_registry)
+          else
+            IO.puts "Voter #{inspect voter_name} is voting for candidate #{inspect cand_name}!"
+            vote_loop(voters,
+              candidates,
+              cand_names,
+              blacklist,
+              Map.update(tally, cand_name, 1, &(&1 + 1)),
+              Map.put(voting_record, voter_name, cand_name),
+              voter_whitelist,
+              cand_registry)
+          end
       end
     end
   end
