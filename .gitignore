@@ -2,3 +2,28 @@ notes.md
 .nvimrc
 *.txt
 throwaway.exs
+
+# The directory Mix will write compiled artifacts to.
+caucus/_build/
+
+# If you run "mix test --cover", coverage assets end up here.
+caucus/cover/
+
+# The directory Mix downloads your dependencies sources to.
+caucus/deps/
+
+# Where third-party dependencies like ExDoc output generated docs.
+caucus/doc/
+
+# Ignore .fetch files in case you like to edit your project deps locally.
+caucus/.fetch
+
+# If the VM crashes, it generates a dump, let's ignore it too.
+caucus/erl_crash.dump
+
+# Also ignore archive artifacts (built via "mix archive.build").
+caucus/*.ez
+
+# Ignore package tarball (built via "mix hex.build").
+caucus/caucus-*.tar
+
