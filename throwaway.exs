@@ -56,3 +56,36 @@ defmodule CandidateRegistry do
     end
   end
 end
+
+# A Voter that attempts to vote twice in the Caucus
+defmodule GreedyVoter do
+  use Voter.Mixin
+      {:vote_request, eligible_candidates, vote_leader} ->
+        sorted_candidates = voting_fun.(candidates)
+        %Candidate{name: voting_for, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) end)
+        %Candidate{name: second_vote, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) && cand.name != voting_for end)
+        IO.puts "Greedy voter #{name} is voting for multiple candidates!"
+        send vote_leader, {:vote, voting_for}
+        send(vote_leader, if (second_vote) do
+                            second_vote
+                          else
+                            voting_for
+                          end)
+        loop(name, candidates, voting_fun)
+    end
+  end
+
+  defp loop27(name, candidates, voting_fun) do
+    receive do
+      %AbstractRegistry{values: new_candidates, type: Candidate} -> 
+        IO.puts "Voter #{name} has received candidates! #{inspect new_candidates}"
+        loop(name, new_candidates, voting_fun)
+      {:vote_request, eligible_candidates, vote_leader} ->
+        sorted_candidates = voting_fun.(candidates)
+        %Candidate{name: voting_for, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) end)
+        IO.puts "Voter #{name} is voting for #{voting_for}!"
+        send vote_leader, {:vote, voting_for}
+        loop(name, candidates, voting_fun)
+    end
+  end
+end

@@ -15,8 +15,6 @@
 # 7. a Vote is a {:vote, Name}
 
 ###### TODOS ######
-# 1. stubborn candidates
-# 2. candidates that drop out
 # 3. late joining voter
 # 4. greedy voter
 # 5. stubborn voter
@@ -92,34 +90,70 @@ defmodule AbstractRegistry do
   end
 end
 
-# A Voter that participates in the Caucus
-defmodule Voter do
+# The struct for a Voter declaration
+defmodule VoterStruct do
   defstruct [:name, :pid]
+end
 
-  # Initialize a new voter
-  # Name PID PID ([Setof Candidate] -> [Setof Candidate]) -> PID
-  def spawn(name, voter_registry, cand_registry, voting_fun) do
-    spawn fn -> 
-      send voter_registry, %Voter{name: name, pid: self()}
-      send cand_registry, {:subscribe, self()}
-      loop(name, MapSet.new(), voting_fun)
+# Shared behavior between voters
+defmodule Voter.Mixin do
+  defmacro __using__(_) do
+    quote do
+      # Initialize a new voter
+      # Name Pid Pid ([Setof Candidate] -> [Setof Candidate]) -> PID
+      def spawn(name, voter_registry, cand_registry, voting_fun) do
+        spawn fn -> 
+          send voter_registry, %VoterStruct{name: name, pid: self()}
+          send cand_registry, {:subscribe, self()}
+          loop(name, MapSet.new(), voting_fun)
+        end
+      end
+
+      defp loop(name, candidates, voting_fun) do
+        receive do
+          %AbstractRegistry{values: new_candidates, type: Candidate} ->
+            IO.puts "Voter #{name} has received candidates! #{inspect new_candidates}"
+            loop(name, new_candidates, voting_fun)
+          {:vote_request, eligible_candidates, vote_leader} ->
+            vote(name, candidates, eligible_candidates, vote_leader, voting_fun)
+            loop(name, candidates, voting_fun)
+        end
+      end
     end
   end
+end
 
-  # Listen to new messages and respond accordingly
-  # Name [Setof Candidate] ([Setof Candidate] -> [Setof Candidate]) -> void
-  defp loop(name, candidates, voting_fun) do
-    receive do
-      %AbstractRegistry{values: new_candidates, type: Candidate} -> 
-        IO.puts "Voter #{name} has received candidates! #{inspect new_candidates}"
-        loop(name, new_candidates, voting_fun)
-      {:vote_request, eligible_candidates, vote_leader} ->
-        sorted_candidates = voting_fun.(candidates)
-        %Candidate{name: cand_name, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) end)
-        IO.puts "Voter #{name} is voting for #{cand_name}!"
-        send vote_leader, {:vote, cand_name}
-        loop(name, candidates, voting_fun)
-    end
+# A Voter that participates in the Caucus
+defmodule Voter do
+  use Voter.Mixin
+  # Issue a ballot for the voter's preferred candidate
+  # Name [Setof Candidate] [Setof Candidate] PID ([Setof Candidate] -> [Setof Candidate]) -> void
+  defp vote(name, all_candidates, eligible_candidates, vote_leader, voting_fun) do
+    sorted_candidates = voting_fun.(all_candidates)
+    %Candidate{name: voting_for, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) end)
+    IO.puts "Voter #{name} is voting for #{voting_for}!"
+    send vote_leader, {:vote, voting_for}
+    loop(name, all_candidates, voting_fun)
+  end
+end
+
+# A Voter that votes for multiple candidates
+defmodule GreedyVoter do
+  use Voter.Mixin
+
+  # Issue multiple ballots for the voter's preferred candidates
+  # Name [Setof Candidate] [Setof Candidate] PID ([Setof Candidate] -> [Setof Candidate]) -> void
+  defp vote(name, all_candidates, eligible_candidates, vote_leader, voting_fun) do
+    sorted_candidates = voting_fun.(all_candidates)
+    %Candidate{name: voting_for, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) end)
+    %Candidate{name: second_vote, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) && cand.name != voting_for end)
+    IO.puts "Greedy voter #{name} is voting for multiple candidates!"
+    send vote_leader, {:vote, voting_for}
+    send(vote_leader, if (second_vote) do
+                        second_vote
+                      else
+                        voting_for
+                      end)
   end
 end
 
@@ -151,7 +185,7 @@ defmodule VoteLeader do
       vote_loop(voters, valid_candidates, Enum.reduce(valid_candidates, %{}, fn cand, acc -> Map.put(acc, cand.name, cand) end), blacklist, %{}, candidate_registry)
     else
       receive do
-        %AbstractRegistry{values: new_voters, type: Voter} ->
+        %AbstractRegistry{values: new_voters, type: VoterStruct} ->
           IO.puts "Vote leader received voters! #{inspect new_voters}"
           prepare_voting(new_voters, candidates, blacklist, candidate_registry)
         %AbstractRegistry{values: new_candidates, type: Candidate} ->
@@ -165,7 +199,7 @@ defmodule VoteLeader do
   # [Setof Voter] [Setof Candidate] PID -> void
   defp issue_votes(voters, candidates) do
     IO.puts "Issuing votes!"
-    Enum.each(voters, fn %Voter{name: _, pid: pid} -> send pid, {:vote_request, candidates, self()} end)
+    Enum.each(voters, fn %VoterStruct{name: _, pid: pid} -> send pid, {:vote_request, candidates, self()} end)
   end
 
   # Receive votes from voters and elect a winner if possible
@@ -232,7 +266,7 @@ Candidate.spawn("4", 10, 0, cand_registry)
 Candidate.spawn("5", 10, 0, cand_registry)
 Candidate.spawn("6", 10, 0, cand_registry)
 
-voter_registry = AbstractRegistry.create(Voter)
+voter_registry = AbstractRegistry.create(VoterStruct)
 
 Voter.spawn("ABC", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
 Voter.spawn("DEF", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
