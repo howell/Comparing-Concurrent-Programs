@@ -89,3 +89,71 @@ defmodule GreedyVoter do
     end
   end
 end
+
+
+
+
+
+
+Voter.spawn("ABC", voter_registry, cand_registry, StupidSort.generate(["Tulsi"]))
+Voter.spawn("DEF", voter_registry, cand_registry, StupidSort.generate(["Tulsi"]))
+Voter.spawn("GHI", voter_registry, cand_registry, StupidSort.generate(["Tulsi"]))
+Voter.spawn("JKL", voter_registry, cand_registry, StupidSort.generate(["Tulsi"]))
+
+Voter.spawn("123", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("124", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("125", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("CBA", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("FED", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("IHG", voter_registry, cand_registry, StupidSort.generate("Biden"))
+
+Voter.spawn("118", voter_registry, cand_registry, StupidSort.generate("1"))
+Voter.spawn("108", voter_registry, cand_registry, StupidSort.generate("2"))
+Voter.spawn("107", voter_registry, cand_registry, StupidSort.generate("3"))
+Voter.spawn("151", voter_registry, cand_registry, StupidSort.generate("4"))
+Voter.spawn("169", voter_registry, cand_registry, StupidSort.generate("5"))
+Voter.spawn("186", voter_registry, cand_registry, StupidSort.generate("6"))
+Voter.spawn("207", voter_registry, cand_registry, StupidSort.generate("2"))
+Voter.spawn("230", voter_registry, cand_registry, StupidSort.generate("1"))
+Voter.spawn("A", voter_registry, cand_registry, StupidSort.generate("2"))
+Voter.spawn("B", voter_registry, cand_registry, StupidSort.generate("2"))
+Voter.spawn("C", voter_registry, cand_registry, StupidSort.generate("2"))
+Voter.spawn("D", voter_registry, cand_registry, StupidSort.generate("2"))
+Voter.spawn("E", voter_registry, cand_registry, StupidSort.generate("2"))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

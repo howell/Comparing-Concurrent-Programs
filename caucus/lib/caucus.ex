@@ -220,21 +220,31 @@ defmodule VoteLeader do
       end
     else
       receive do
-        {:vote, cand_name} -> vote_loop(voters, candidates, cand_names, blacklist, Map.update(tally, cand_name, 1, &(&1 + 1)), cand_registry)
+        {:vote, cand_name} -> 
+          IO.puts "Vote received for candidate #{inspect cand_name}!"
+          vote_loop(voters, candidates, cand_names, blacklist, Map.update(tally, cand_name, 1, &(&1 + 1)), cand_registry)
       end
     end
   end
 end
 
 defmodule StupidSort do
-  def generate(cand_name) do
+  def generate(cand_names) when is_list(cand_names) do
     fn candidates ->
-      candidate? = Enum.find(candidates, fn(%Candidate{name: n, tax_rate: _, pid: _}) -> n == cand_name end)
-      if candidate? do
-        [candidate? | Enum.reject(candidates, fn(%Candidate{name: n, tax_rate: _, pid: _}) -> n == cand_name end)]
-      else
-        candidates
-      end
+      Enum.reduce(Enum.reverse(cand_names), Enum.sort(candidates), fn cand_name, acc -> new_candidates(cand_name, acc) end)
+    end
+  end
+
+  def generate(cand_name) do
+    fn candidates -> new_candidates(cand_name, Enum.sort(candidates)) end
+  end
+
+  defp new_candidates(cand_name, candidates) do
+    candidate? = Enum.find(candidates, fn(%Candidate{name: n, tax_rate: _, pid: _}) -> n == cand_name end)
+    if candidate? do
+      [candidate? | Enum.reject(candidates, fn(%Candidate{name: n, tax_rate: _, pid: _}) -> n == cand_name end)]
+    else
+      candidates
     end
   end
 end
