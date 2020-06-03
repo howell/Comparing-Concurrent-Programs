@@ -64,10 +64,6 @@
 (struct declare-winner (candidate) #:transparent)
 
 
-;;;; ASSUMPTIONS ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; 6. Voters never try joining late (how is this even expressible...?) --> Hard to get right due to timing  (vote only after first round?)
-;; 
-
 ;;;; ENTITIES ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; 1. Candidates        
 ;; 2. Candidate Registry

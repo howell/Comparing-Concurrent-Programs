@@ -15,8 +15,6 @@
 # 7. a Vote is a {:vote, Name}
 
 ###### TODOS ######
-# 3. late joining voter
-# 5. stubborn voter
 # 6. early leaving voter
 # 7. unresponsive voter
 # 8. crashing voter?
@@ -165,6 +163,16 @@ defmodule StubbornVoter do
     sorted_candidates = voting_fun.(all_candidates)
     [%Candidate{name: voting_for, tax_rate: _, pid: _} | _] = sorted_candidates
     send vote_leader, {:vote, name, voting_for}
+  end
+end
+
+defmodule SleepyVoter do
+  use Voter.Mixin
+
+  # Doesn't issue a ballot
+  # 5 arguments -> void
+  defp vote(_, _, _, _, _) do
+    :noop
   end
 end
 
