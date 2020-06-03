@@ -22,13 +22,7 @@ Voter.spawn("STU", voter_registry, cand_registry, StupidSort.generate("Biden"))
 Voter.spawn("VWX", voter_registry, cand_registry, StupidSort.generate("Biden"))
 Voter.spawn("YZ1", voter_registry, cand_registry, StupidSort.generate("Biden"))
 
-StubbornVoter.spawn("1", voter_registry, cand_registry, StupidSort.generate("1"))
-StubbornVoter.spawn("2", voter_registry, cand_registry, StupidSort.generate("2"))
-StubbornVoter.spawn("3", voter_registry, cand_registry, StupidSort.generate("1"))
-StubbornVoter.spawn("4", voter_registry, cand_registry, StupidSort.generate("2"))
-StubbornVoter.spawn("5", voter_registry, cand_registry, StupidSort.generate("1"))
-StubbornVoter.spawn("6", voter_registry, cand_registry, StupidSort.generate("3"))
-
+SleepyVoter.spawn("g", voter_registry, cand_registry, StupidSort.generate("Biden"))
 
 
 pid = VoteLeader.spawn(voter_registry, cand_registry)
