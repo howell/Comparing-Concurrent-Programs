@@ -16,7 +16,6 @@
 
 ###### TODOS ######
 # 3. late joining voter
-# 4. greedy voter
 # 5. stubborn voter
 # 6. early leaving voter
 # 7. unresponsive voter
@@ -157,6 +156,18 @@ defmodule GreedyVoter do
   end
 end
 
+defmodule StubbornVoter do
+  use Voter.Mixin
+
+  # Issue a ballot for a voter's preferred candidate, regardless of their status in the race
+  # Name [Setof Candidate] [Setof Candidate] PID ([Setof Candidate] -> [Setof Candidate]) -> void
+  defp vote(name, all_candidates, _eligible_candidates, vote_leader, voting_fun) do
+    sorted_candidates = voting_fun.(all_candidates)
+    [%Candidate{name: voting_for, tax_rate: _, pid: _} | _] = sorted_candidates
+    send vote_leader, {:vote, name, voting_for}
+  end
+end
+
 # The actor that manages voting and elects a winner
 defmodule VoteLeader do
   # initialize the VoteLeader
@@ -208,6 +219,7 @@ defmodule VoteLeader do
   # [Setof Voter] [Setof Candidate] [Mapof Name -> Candidate] [Mapof Name -> Number] PID -> void
   defp vote_loop(voters, candidates, cand_names, blacklist, tally, voting_record, voter_whitelist, cand_registry) do
     num_votes = Enum.reduce(tally, 0, fn {_, count}, acc -> acc + count end)
+    IO.puts "votes so far: #{inspect tally}"
     if Enum.count(voters) == num_votes do
       {frontrunner, their_votes} = Enum.max(tally, fn {_, count1}, {_, count2} -> count1 >= count2 end)
       if their_votes > (num_votes / 2) do
@@ -220,28 +232,38 @@ defmodule VoteLeader do
         setup_voting(voters, MapSet.put(blacklist, cand_names[loser]), cand_registry)
       end
     else
-      # TODO I suspect the bug is that num_votes is LARGER than size of voters, because updating the tally is not working correctly.
       receive do
         {:vote, voter_name, cand_name} -> 
-          if (Map.has_key?(voting_record, voter_name)) do
-            vote_loop(MapSet.delete(voters, voter_whitelist[voter_name]),
-              candidates,
-              cand_names,
-              blacklist,
-              Map.update(tally, voting_record[voter_name], 1, &(&1 - 1)),
-              Map.delete(voting_record, voter_name),
-              Map.delete(voter_whitelist, voter_name),
-              cand_registry)
-          else
-            IO.puts "Voter #{inspect voter_name} is voting for candidate #{inspect cand_name}!"
-            vote_loop(voters,
-              candidates,
-              cand_names,
-              blacklist,
-              Map.update(tally, cand_name, 1, &(&1 + 1)),
-              Map.put(voting_record, voter_name, cand_name),
-              voter_whitelist,
-              cand_registry)
+          cond do
+            # CASE 1: Stubborn Voter || CASE 2: Greedy Voter
+            !Map.has_key?(cand_names, cand_name) || Map.has_key?(voting_record, voter_name) ->
+              IO.puts "Voter #{inspect voter_name} has been caught trying to vote for a dropped candidate!"
+              update_tally_fun = fn old_val -> 
+                if Map.has_key?(cand_names, voting_record[voter_name]) do
+                  old_val - 1 
+                else
+                  0
+                end
+              end
+
+              vote_loop(MapSet.delete(voters, voter_whitelist[voter_name]),
+                candidates,
+                cand_names,
+                blacklist,
+                Map.update(tally, voting_record[voter_name], 0, update_tally_fun),
+                Map.delete(voting_record, voter_name),
+                Map.delete(voter_whitelist, voter_name),
+                cand_registry)
+            true ->
+              IO.puts "Voter #{inspect voter_name} is voting for candidate #{inspect cand_name}!"
+              vote_loop(voters,
+                candidates,
+                cand_names,
+                blacklist,
+                Map.update(tally, cand_name, 1, &(&1 + 1)),
+                Map.put(voting_record, voter_name, cand_name),
+                voter_whitelist,
+                cand_registry)
           end
       end
     end

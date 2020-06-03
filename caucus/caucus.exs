@@ -12,23 +12,22 @@ Candidate.spawn("6", 10, 0, cand_registry)
 
 voter_registry = AbstractRegistry.create(VoterStruct)
 
-# 5 for Tulsi
-# 3 for Biden-Tulsi
-# 3 for Bernie-Tulsi
 Voter.spawn("ABC", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
 Voter.spawn("DEF", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
 Voter.spawn("GHI", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
-Voter.spawn("JKL", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
-Voter.spawn("MNO", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
-GreedyVoter.spawn("a", voter_registry, cand_registry, StupidSort.generate(["Biden", "Tulsi"]))
-GreedyVoter.spawn("b", voter_registry, cand_registry, StupidSort.generate(["Biden", "Tulsi"]))
-GreedyVoter.spawn("c", voter_registry, cand_registry, StupidSort.generate(["Biden", "Tulsi"]))
-GreedyVoter.spawn("d", voter_registry, cand_registry, StupidSort.generate(["Bernie", "Tulsi"]))
-GreedyVoter.spawn("e", voter_registry, cand_registry, StupidSort.generate(["Bernie", "Tulsi"]))
-GreedyVoter.spawn("f", voter_registry, cand_registry, StupidSort.generate(["Bernie", "Tulsi"]))
-Voter.spawn("j", voter_registry, cand_registry, StupidSort.generate("Bernie"))
-Voter.spawn("k", voter_registry, cand_registry, StupidSort.generate("Bernie"))
-Voter.spawn("l", voter_registry, cand_registry, StupidSort.generate("Bernie"))
+Voter.spawn("JKL", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("MNO", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("PQR", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("STU", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("VWX", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("YZ1", voter_registry, cand_registry, StupidSort.generate("Biden"))
+
+StubbornVoter.spawn("1", voter_registry, cand_registry, StupidSort.generate("1"))
+StubbornVoter.spawn("2", voter_registry, cand_registry, StupidSort.generate("2"))
+StubbornVoter.spawn("3", voter_registry, cand_registry, StupidSort.generate("1"))
+StubbornVoter.spawn("4", voter_registry, cand_registry, StupidSort.generate("2"))
+StubbornVoter.spawn("5", voter_registry, cand_registry, StupidSort.generate("1"))
+StubbornVoter.spawn("6", voter_registry, cand_registry, StupidSort.generate("3"))
 
 
 
