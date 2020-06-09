@@ -8,12 +8,13 @@
 #
 #
 # 1. a Candidate is a %Candidate{name: Name, tax_rate: TaxRate, pid: PID}
-# 2. a CandidateRegistry is a %CandidateRegistry{candidates: [Setof Candidate]}
-# 3. a Voter is a %Voter{name: Name, pid: PID}
-# 4. a VoterRegistry is a %VoterRegistry{voters: [Setof Voter]}
-# 5. a Subscription is a {:subscribe, PID}
-# 6. a VoteRequest is a {:vote_request, [Setof Candidate], PID}
-# 7. a Vote is a {:vote, Name}
+# 2. a Voter is a %Voter{name: Name, pid: PID}
+# 3. a Subscription is a {:subscribe, PID}
+# 4. a VoteRequest is a {:vote_request, [Setof Candidate], PID}
+# 5. a Vote is a {:vote, Name}
+# 6. a VoteLeader is a %VoteLeader{pid: PID}
+# 7. a Ballot is a {:ballot, [Mapof Name -> Number]}
+# 8. the contents of an AbstractRegistry are of the form %AbstractRegistry{values: [Setof X], type: X}
 
 
 # Candidates in the Caucus
@@ -55,19 +56,23 @@ defmodule AbstractRegistry do
 
   def key_loop(type, values, subscribers) do
     receive do
+      # Receiving a struct of the module Type, update all subscribers listening to the specified key with new data
       {:publish, key, %^type{} = new_val} ->
         IO.puts "New value: #{inspect new_val} under key #{inspect key} for #{inspect type}!"
         new_values = Map.update(values, key, MapSet.new([new_val]), fn vals -> MapSet.put(vals, new_val) end)
         Enum.each(Map.get(subscribers, key, MapSet.new()), fn s -> send s, the_package(values[key], type) end)
         key_loop(type, new_values, subscribers)
+      # Add a new subscriber listening to the specified key and update them with the latest
       {:subscribe, key, pid} ->
         IO.puts "We have a new subscriber! #{inspect pid} listening to key #{inspect key} for #{inspect type}!"
         send pid, the_package(values[key], type)
         key_loop(type, values, Map.update(subscribers, key, MapSet.new([pid]), fn vals -> MapSet.put(vals, pid) end))
+      # Send a single-instance message to a process with the most recent snapshot of data at the specified key
       {:msg, key, pid} ->
         IO.puts "Process #{inspect pid} is requesting a message from key #{inspect key}!"
         send pid, the_package(values[key], type)
         key_loop(type, values, subscribers)
+      # Unpublish some data specified at the current key
       {:remove, key, val} ->
         IO.puts "Value #{inspect val} is removing itself from the Registry under key #{inspect key}!"
         key_loop(type, Map.update(subscribers, key, MapSet.new, fn vals -> MapSet.delete(vals, val) end), subscribers)
@@ -114,7 +119,7 @@ defmodule Voter.Mixin do
   defmacro __using__(_) do
     quote do
       # Initialize a new voter
-      # Name Region Pid Pid ([Setof Candidate] -> [Setof Candidate]) -> PID
+      # Name Region PID PID ([Setof Candidate] -> [Setof Candidate]) -> PID
       def spawn(name, region, voter_registry, cand_registry, voting_fun) do
         spawn fn -> 
           send voter_registry, {:publish, region, %VoterStruct{name: name, pid: self()}}
@@ -123,6 +128,8 @@ defmodule Voter.Mixin do
         end
       end
 
+      # Respond to messages sent to a voter
+      # Name [Setof Candidate] ([Enumerable Candidate] -> [Listof Candidate]) -> void
       defp loop(name, candidates, voting_fun) do
         receive do
           %AbstractRegistry{values: new_candidates, type: Candidate} ->
@@ -301,6 +308,8 @@ defmodule VoteLeader do
     end
   end
 
+  # Determine a winner, or if there isn't one, remove a loser and start next voting loop
+  # [Setof Candidate] [Mapof Name -> Candidate] [Setof Candidate] [Mapof Name -> Number] [Mapof Name -> Name] [Setof Voter] PID PID -> void
   defp conclude_vote(candidates, cand_names, blacklist, tally, voting_record, voter_whitelist, cand_registry, region_manager) do
     confirmed_voters = Enum.reduce(voting_record, MapSet.new, fn {voter_name, _}, acc -> MapSet.put(acc, voter_whitelist[voter_name]) end)
     num_votes = Enum.reduce(tally, 0, fn {_, count}, acc -> acc + count end)
@@ -317,6 +326,7 @@ defmodule VoteLeader do
   end
 end
 
+# Aggregates the results of many caucuses to determine a winner for a region
 defmodule RegionManager do
   def spawn do
     spawn fn -> determine_region(MapSet.new(), %{}) end

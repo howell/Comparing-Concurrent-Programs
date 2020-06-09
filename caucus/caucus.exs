@@ -12,6 +12,8 @@ Candidate.spawn("6", 10, 0, cand_registry)
 
 voter_registry = AbstractRegistry.create(VoterStruct, true)
 
+region_manager = RegionManager.spawn
+
 Voter.spawn("ABC", "A", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
 Voter.spawn("DEF", "A", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
 Voter.spawn("GHI", "A", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
@@ -21,12 +23,43 @@ Voter.spawn("PQR", "A", voter_registry, cand_registry, StupidSort.generate("Bide
 Voter.spawn("STU", "A", voter_registry, cand_registry, StupidSort.generate("Biden"))
 Voter.spawn("VWX", "A", voter_registry, cand_registry, StupidSort.generate("Biden"))
 Voter.spawn("YZ1", "A", voter_registry, cand_registry, StupidSort.generate("Biden"))
-
 SleepyVoter.spawn("g", "A", voter_registry, cand_registry, StupidSort.generate("Biden"))
-
-region_manager = RegionManager.spawn
-
 VoteLeader.spawn("A", voter_registry, cand_registry, region_manager)
+
+Voter.spawn("1", "B", voter_registry, cand_registry, StupidSort.generate("Bernie"))
+Voter.spawn("2", "B", voter_registry, cand_registry, StupidSort.generate("Bernie"))
+Voter.spawn("3", "B", voter_registry, cand_registry, StupidSort.generate("Bernie"))
+Voter.spawn("4", "B", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("5", "B", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("6", "B", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("7", "B", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("8", "B", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("9", "B", voter_registry, cand_registry, StupidSort.generate("Biden"))
+VoteLeader.spawn("B", voter_registry, cand_registry, region_manager)
+
+Voter.spawn("10", "C", voter_registry, cand_registry, StupidSort.generate("Bernie"))
+Voter.spawn("11", "C", voter_registry, cand_registry, StupidSort.generate("Bernie"))
+Voter.spawn("12", "C", voter_registry, cand_registry, StupidSort.generate("Bernie"))
+Voter.spawn("13", "C", voter_registry, cand_registry, StupidSort.generate("Bernie"))
+Voter.spawn("14", "C", voter_registry, cand_registry, StupidSort.generate("Bernie"))
+VoteLeader.spawn("C", voter_registry, cand_registry, region_manager)
+
+
+Voter.spawn("14", "D", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
+Voter.spawn("15", "D", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
+Voter.spawn("16", "D", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
+Voter.spawn("17", "D", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
+Voter.spawn("18", "D", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
+VoteLeader.spawn("D", voter_registry, cand_registry, region_manager)
+
+Voter.spawn("19", "E", voter_registry, cand_registry, StupidSort.generate("6"))
+Voter.spawn("20", "E", voter_registry, cand_registry, StupidSort.generate("6"))
+Voter.spawn("21", "E", voter_registry, cand_registry, StupidSort.generate("6"))
+Voter.spawn("22", "E", voter_registry, cand_registry, StupidSort.generate("6"))
+Voter.spawn("23", "E", voter_registry, cand_registry, StupidSort.generate("6"))
+VoteLeader.spawn("E", voter_registry, cand_registry, region_manager)
+
+
 ref = Process.monitor(region_manager)
 
 receive do
