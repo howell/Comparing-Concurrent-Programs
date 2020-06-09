@@ -4,6 +4,7 @@
 # a TaxRate is a Number
 # a PID is a Process ID
 # a Threshold is a Number
+# a Region is a String
 #
 #
 # 1. a Candidate is a %Candidate{name: Name, tax_rate: TaxRate, pid: PID}
@@ -14,11 +15,6 @@
 # 6. a VoteRequest is a {:vote_request, [Setof Candidate], PID}
 # 7. a Vote is a {:vote, Name}
 
-###### TODOS ######
-# 6. early leaving voter
-# 7. unresponsive voter
-# 8. crashing voter?
-# 9. unregistered voter?
 
 # Candidates in the Caucus
 defmodule Candidate do
@@ -52,9 +48,30 @@ defmodule AbstractRegistry do
   defstruct [:values, :type]
 
   # initialize a new AbstractRegistry
-  def create(type) do
+  def create(type, keys \\ false) do
     IO.puts "We exist with type #{inspect type}!"
-    spawn fn -> loop(type, MapSet.new(), MapSet.new()) end
+    spawn fn -> if keys, do: key_loop(type, %{}, %{}), else: loop(type, MapSet.new(), MapSet.new()) end
+  end
+
+  def key_loop(type, values, subscribers) do
+    receive do
+      {:publish, key, %^type{} = new_val} ->
+        IO.puts "New value: #{inspect new_val} under key #{inspect key} for #{inspect type}!"
+        new_values = Map.update(values, key, MapSet.new([new_val]), fn vals -> MapSet.put(vals, new_val) end)
+        Enum.each(Map.get(subscribers, key, MapSet.new()), fn s -> send s, the_package(values[key], type) end)
+        key_loop(type, new_values, subscribers)
+      {:subscribe, key, pid} ->
+        IO.puts "We have a new subscriber! #{inspect pid} listening to key #{inspect key} for #{inspect type}!"
+        send pid, the_package(values[key], type)
+        key_loop(type, values, Map.update(subscribers, key, MapSet.new([pid]), fn vals -> MapSet.put(vals, pid) end))
+      {:msg, key, pid} ->
+        IO.puts "Process #{inspect pid} is requesting a message from key #{inspect key}!"
+        send pid, the_package(values[key], type)
+        key_loop(type, values, subscribers)
+      {:remove, key, val} ->
+        IO.puts "Value #{inspect val} is removing itself from the Registry under key #{inspect key}!"
+        key_loop(type, Map.update(subscribers, key, MapSet.new, fn vals -> MapSet.delete(vals, val) end), subscribers)
+    end
   end
 
   def loop(type, values, subscribers) do
@@ -97,10 +114,10 @@ defmodule Voter.Mixin do
   defmacro __using__(_) do
     quote do
       # Initialize a new voter
-      # Name Pid Pid ([Setof Candidate] -> [Setof Candidate]) -> PID
-      def spawn(name, voter_registry, cand_registry, voting_fun) do
+      # Name Region Pid Pid ([Setof Candidate] -> [Setof Candidate]) -> PID
+      def spawn(name, region, voter_registry, cand_registry, voting_fun) do
         spawn fn -> 
-          send voter_registry, %VoterStruct{name: name, pid: self()}
+          send voter_registry, {:publish, region, %VoterStruct{name: name, pid: self()}}
           send cand_registry, {:subscribe, self()}
           loop(name, MapSet.new(), voting_fun)
         end
@@ -179,11 +196,11 @@ end
 # The actor that manages voting and elects a winner
 defmodule VoteLeader do
   # initialize the VoteLeader
-  # PID PID -> PID
-  def spawn(voter_registry, candidate_registry) do
+  # Region PID PID -> PID
+  def spawn(region, voter_registry, candidate_registry) do
     spawn fn -> 
       Process.sleep(1000)
-      send voter_registry, {:subscribe, self()}
+      send voter_registry, {:subscribe, region, self()}
       setup_voting(MapSet.new(), MapSet.new(), candidate_registry)
     end
   end

@@ -10,22 +10,22 @@ Candidate.spawn("4", 10, 0, cand_registry)
 Candidate.spawn("5", 10, 0, cand_registry)
 Candidate.spawn("6", 10, 0, cand_registry)
 
-voter_registry = AbstractRegistry.create(VoterStruct)
+voter_registry = AbstractRegistry.create(VoterStruct, true)
 
-Voter.spawn("ABC", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
-Voter.spawn("DEF", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
-Voter.spawn("GHI", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
-Voter.spawn("JKL", voter_registry, cand_registry, StupidSort.generate("Biden"))
-Voter.spawn("MNO", voter_registry, cand_registry, StupidSort.generate("Biden"))
-Voter.spawn("PQR", voter_registry, cand_registry, StupidSort.generate("Biden"))
-Voter.spawn("STU", voter_registry, cand_registry, StupidSort.generate("Biden"))
-Voter.spawn("VWX", voter_registry, cand_registry, StupidSort.generate("Biden"))
-Voter.spawn("YZ1", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("ABC", "A", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
+Voter.spawn("DEF", "A", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
+Voter.spawn("GHI", "A", voter_registry, cand_registry, StupidSort.generate("Tulsi"))
+Voter.spawn("JKL", "A", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("MNO", "A", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("PQR", "A", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("STU", "A", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("VWX", "A", voter_registry, cand_registry, StupidSort.generate("Biden"))
+Voter.spawn("YZ1", "A", voter_registry, cand_registry, StupidSort.generate("Biden"))
 
-SleepyVoter.spawn("g", voter_registry, cand_registry, StupidSort.generate("Biden"))
+SleepyVoter.spawn("g", "A", voter_registry, cand_registry, StupidSort.generate("Biden"))
 
 
-pid = VoteLeader.spawn(voter_registry, cand_registry)
+pid = VoteLeader.spawn("A", voter_registry, cand_registry)
 ref = Process.monitor(pid)
 
 receive do
