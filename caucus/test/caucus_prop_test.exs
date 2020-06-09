@@ -7,6 +7,7 @@ defmodule RegistryProps do
   end
 
   property "stores results" do
+    length = choose(1, :inf)
     candidate_structs = let {str, n, t} <- {char_list(), nat(), any()} do
       %Candidate{name: str, tax_rate: n, pid: t}
     end
