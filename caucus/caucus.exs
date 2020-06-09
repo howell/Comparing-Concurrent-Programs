@@ -24,9 +24,10 @@ Voter.spawn("YZ1", "A", voter_registry, cand_registry, StupidSort.generate("Bide
 
 SleepyVoter.spawn("g", "A", voter_registry, cand_registry, StupidSort.generate("Biden"))
 
+region_manager = RegionManager.spawn
 
-pid = VoteLeader.spawn("A", voter_registry, cand_registry)
-ref = Process.monitor(pid)
+VoteLeader.spawn("A", voter_registry, cand_registry, region_manager)
+ref = Process.monitor(region_manager)
 
 receive do
   {:DOWN, ^ref, _, _, _} -> :ok
