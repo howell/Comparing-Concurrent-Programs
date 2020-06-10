@@ -11,7 +11,9 @@ defmodule RegistryStateProps do
 
   defmodule CandidateState do
     def initial_state do
-      name = "Hello"
+      generator = char_list()
+      IO.puts inspect(generator)
+      name = generator
       threshold = 5
       %{pid: Candidate.spawn(name, any(), threshold, self()), name: name, threshold: threshold}
     end
@@ -29,7 +31,7 @@ defmodule RegistryStateProps do
     def precondition(_, _), do: true
     def postcondition(_, _, _), do: true
 
-    def next_state(_, _, s), do: s
+    def next_state(s, _, _), do: s
   end
 
   property "Will not withdraw from race if gets enough votes" do

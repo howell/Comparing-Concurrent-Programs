@@ -1,4 +1,4 @@
-cand_registry = AbstractRegistry.create(Candidate)
+cand_registry = AbstractRegistry.create(CandStruct)
 
 Candidate.spawn("Bernie", 50, 0, cand_registry)
 Candidate.spawn("Biden", 25, 0, cand_registry)

@@ -6,26 +6,26 @@
 # a Threshold is a Number
 # a Region is a String
 #
-#
-# 1. a Candidate is a %Candidate{name: Name, tax_rate: TaxRate, pid: PID}
-# 2. a Voter is a %Voter{name: Name, pid: PID}
-# 3. a Subscription is a {:subscribe, PID}
-# 4. a VoteRequest is a {:vote_request, [Setof Candidate], PID}
-# 5. a Vote is a {:vote, Name}
-# 6. a VoteLeader is a %VoteLeader{pid: PID}
-# 7. a Ballot is a {:ballot, [Mapof Name -> Number]}
-# 8. the contents of an AbstractRegistry are of the form %AbstractRegistry{values: [Setof X], type: X}
+# a Candidate is a %CandStruct{name: Name, tax_rate: TaxRate, pid: PID}
+# a Voter is a %VoterStruct{name: Name, pid: PID}
+# a Subscription is a {:subscribe, PID}
+# a VoteRequest is a {:vote_request, [Setof Candidate], PID}
+# a Vote is a {:vote, Name}
+# a VoteLeader is a %VoteLeader{pid: PID}
+# a Ballot is a {:ballot, [Mapof Name -> Number]}
+# the contents of an AbstractRegistry are of the form %AbstractRegistry{values: [Setof X], type: X}
 
+defmodule CandStruct do
+  defstruct [:name, :tax_rate, :pid]
+end
 
 # Candidates in the Caucus
 defmodule Candidate do
-  defstruct [:name, :tax_rate, :pid]
-
   # Notify the Candidate Registry of a new Candidate
   # Name TaxRate Threshold PID -> PID
   def spawn(name, tax_rate, threshold, cand_registry) do
     spawn fn -> 
-      send cand_registry, %Candidate{name: name, tax_rate: tax_rate, pid: self()}
+      send cand_registry, %CandStruct{name: name, tax_rate: tax_rate, pid: self()}
       loop(name, tax_rate, threshold, cand_registry)
     end
   end
@@ -36,7 +36,7 @@ defmodule Candidate do
     receive do
       {:ballot, ballot} -> 
         if ballot[name] < threshold do
-          send cand_registry, {:remove, %Candidate{name: name, tax_rate: tax_rate, pid: self()}}
+          send cand_registry, {:remove, %CandStruct{name: name, tax_rate: tax_rate, pid: self()}}
         else
           loop(name, tax_rate, threshold, cand_registry)
         end
@@ -132,7 +132,7 @@ defmodule Voter.Mixin do
       # Name [Setof Candidate] ([Enumerable Candidate] -> [Listof Candidate]) -> void
       defp loop(name, candidates, voting_fun) do
         receive do
-          %AbstractRegistry{values: new_candidates, type: Candidate} ->
+          %AbstractRegistry{values: new_candidates, type: CandStruct} ->
             IO.puts "Voter #{name} has received candidates! #{inspect new_candidates}"
             loop(name, new_candidates, voting_fun)
           {:vote_request, eligible_candidates, vote_leader} ->
@@ -151,7 +151,7 @@ defmodule Voter do
   # Name [Setof Candidate] [Setof Candidate] PID ([Setof Candidate] -> [Setof Candidate]) -> void
   defp vote(name, all_candidates, eligible_candidates, vote_leader, voting_fun) do
     sorted_candidates = voting_fun.(all_candidates)
-    %Candidate{name: voting_for, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) end)
+    %CandStruct{name: voting_for, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) end)
     IO.puts "Voter #{name} is voting for #{voting_for}!"
     send vote_leader, {:vote, name, voting_for}
     loop(name, all_candidates, voting_fun)
@@ -166,8 +166,8 @@ defmodule GreedyVoter do
   # Name [Setof Candidate] [Setof Candidate] PID ([Setof Candidate] -> [Setof Candidate]) -> void
   defp vote(name, all_candidates, eligible_candidates, vote_leader, voting_fun) do
     sorted_candidates = voting_fun.(all_candidates)
-    %Candidate{name: voting_for, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) end)
-    %Candidate{name: second_vote, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) && cand.name != voting_for end)
+    %CandStruct{name: voting_for, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) end)
+    %CandStruct{name: second_vote, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) && cand.name != voting_for end)
     IO.puts "Greedy voter #{name} is voting for multiple candidates!"
     send vote_leader, {:vote, name, voting_for}
     send(vote_leader, {:vote, name, if (second_vote) do
@@ -185,7 +185,7 @@ defmodule StubbornVoter do
   # Name [Setof Candidate] [Setof Candidate] PID ([Setof Candidate] -> [Setof Candidate]) -> void
   defp vote(name, all_candidates, _eligible_candidates, vote_leader, voting_fun) do
     sorted_candidates = voting_fun.(all_candidates)
-    [%Candidate{name: voting_for, tax_rate: _, pid: _} | _] = sorted_candidates
+    [%CandStruct{name: voting_for, tax_rate: _, pid: _} | _] = sorted_candidates
     send vote_leader, {:vote, name, voting_for}
   end
 end
@@ -209,7 +209,7 @@ defmodule VoteLeader do
     spawn fn -> 
       send region_manager, %VoteLeader{pid: self()}
       Process.sleep(1000)
-      send voter_registry, {:subscribe, region, self()}
+      send voter_registry, {:msg, region, self()}
       setup_voting(MapSet.new(), MapSet.new(), candidate_registry, region_manager)
     end
   end
@@ -247,7 +247,7 @@ defmodule VoteLeader do
         %AbstractRegistry{values: new_voters, type: VoterStruct} ->
           IO.puts "Vote leader received voters! #{inspect new_voters}"
           prepare_voting(new_voters, candidates, blacklist, candidate_registry, region_manager)
-        %AbstractRegistry{values: new_candidates, type: Candidate} ->
+        %AbstractRegistry{values: new_candidates, type: CandStruct} ->
           IO.puts "Vote Leader received candidates! #{inspect new_candidates}"
           prepare_voting(voters, new_candidates, blacklist, candidate_registry, region_manager)
       end
@@ -318,7 +318,7 @@ defmodule VoteLeader do
       send region_manager, {:results, frontrunner}
     else
       {loser, _} = Enum.min(tally, fn {_, count1}, {_, count2} -> count1 <= count2 end)
-      Enum.each(candidates, fn %Candidate{name: _, tax_rate: _, pid: pid} -> send pid, {:ballot, tally} end)
+      Enum.each(candidates, fn %CandStruct{name: _, tax_rate: _, pid: pid} -> send pid, {:ballot, tally} end)
       IO.puts "Our loser is #{loser}!"
 
       setup_voting(confirmed_voters, MapSet.put(blacklist, cand_names[loser]), cand_registry, region_manager)
@@ -361,9 +361,9 @@ defmodule StupidSort do
   end
 
   defp new_candidates(cand_name, candidates) do
-    candidate? = Enum.find(candidates, fn(%Candidate{name: n, tax_rate: _, pid: _}) -> n == cand_name end)
+    candidate? = Enum.find(candidates, fn(%CandStruct{name: n, tax_rate: _, pid: _}) -> n == cand_name end)
     if candidate? do
-      [candidate? | Enum.reject(candidates, fn(%Candidate{name: n, tax_rate: _, pid: _}) -> n == cand_name end)]
+      [candidate? | Enum.reject(candidates, fn(%CandStruct{name: n, tax_rate: _, pid: _}) -> n == cand_name end)]
     else
       candidates
     end
