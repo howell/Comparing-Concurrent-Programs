@@ -10,32 +10,35 @@
 # a Voter is a %VoterStruct{name: Name, pid: PID}
 # a Subscription is a {:subscribe, PID}
 # a VoteRequest is a {:vote_request, [Setof Candidate], PID}
-# a Vote is a {:vote, Name}
+# a Vote is a {:vote, Name, Name}
 # a VoteLeader is a %VoteLeader{pid: PID}
-# a Ballot is a {:ballot, [Mapof Name -> Number]}
-# the contents of an AbstractRegistry are of the form %AbstractRegistry{values: [Setof X], type: X}
+# a Tally is a {:tally, [Mapof Name -> Number]}
+# a CaucusWinner is a {:caucus_winner, Name}
+# an AbstractRegistry response is a %AbstractRegistry{values: [Setof X], type: X}
 
+
+# A Candidate registered for election in the Caucus
 defmodule CandStruct do
   defstruct [:name, :tax_rate, :pid]
 end
 
-# Candidates in the Caucus
+# An actor aiming to receive the support of voters and win Regions
 defmodule Candidate do
-  # Notify the Candidate Registry of a new Candidate
+  # Initialize and setup a Candidate for election
   # Name TaxRate Threshold PID -> PID
   def spawn(name, tax_rate, threshold, cand_registry) do
-    spawn fn -> 
+    spawn fn ->
       send cand_registry, %CandStruct{name: name, tax_rate: tax_rate, pid: self()}
       loop(name, tax_rate, threshold, cand_registry)
     end
   end
 
-  # Listen to messages from other actors and respond accordingly
+  # Hold conversations with other actors
   # Name TaxRate Threshold PID -> void
   defp loop(name, tax_rate, threshold, cand_registry) do
     receive do
-      {:ballot, ballot} -> 
-        if ballot[name] < threshold do
+      {:tally, tally} -> 
+        if tally[name] < threshold do
           send cand_registry, {:remove, %CandStruct{name: name, tax_rate: tax_rate, pid: self()}}
         else
           loop(name, tax_rate, threshold, cand_registry)
@@ -44,39 +47,17 @@ defmodule Candidate do
   end
 end
 
+defmodule StubbornCandidate do
+end
+
 # A pub/sub server for some type of Struct
 defmodule AbstractRegistry do
   defstruct [:values, :type]
 
   # initialize a new AbstractRegistry
-  def create(type, keys \\ false) do
+  def create(type) do
     IO.puts "We exist with type #{inspect type}!"
-    spawn fn -> if keys, do: key_loop(type, %{}, %{}), else: loop(type, MapSet.new(), MapSet.new()) end
-  end
-
-  def key_loop(type, values, subscribers) do
-    receive do
-      # Receiving a struct of the module Type, update all subscribers listening to the specified key with new data
-      {:publish, key, %^type{} = new_val} ->
-        IO.puts "New value: #{inspect new_val} under key #{inspect key} for #{inspect type}!"
-        new_values = Map.update(values, key, MapSet.new([new_val]), fn vals -> MapSet.put(vals, new_val) end)
-        Enum.each(Map.get(subscribers, key, MapSet.new()), fn s -> send s, the_package(values[key], type) end)
-        key_loop(type, new_values, subscribers)
-      # Add a new subscriber listening to the specified key and update them with the latest
-      {:subscribe, key, pid} ->
-        IO.puts "We have a new subscriber! #{inspect pid} listening to key #{inspect key} for #{inspect type}!"
-        send pid, the_package(values[key], type)
-        key_loop(type, values, Map.update(subscribers, key, MapSet.new([pid]), fn vals -> MapSet.put(vals, pid) end))
-      # Send a single-instance message to a process with the most recent snapshot of data at the specified key
-      {:msg, key, pid} ->
-        IO.puts "Process #{inspect pid} is requesting a message from key #{inspect key}!"
-        send pid, the_package(values[key], type)
-        key_loop(type, values, subscribers)
-      # Unpublish some data specified at the current key
-      {:remove, key, val} ->
-        IO.puts "Value #{inspect val} is removing itself from the Registry under key #{inspect key}!"
-        key_loop(type, Map.update(subscribers, key, MapSet.new, fn vals -> MapSet.delete(vals, val) end), subscribers)
-    end
+    spawn fn -> loop(type, MapSet.new(), MapSet.new()) end
   end
 
   def loop(type, values, subscribers) do
@@ -122,7 +103,7 @@ defmodule Voter.Mixin do
       # Name Region PID PID ([Setof Candidate] -> [Setof Candidate]) -> PID
       def spawn(name, region, voter_registry, cand_registry, voting_fun) do
         spawn fn -> 
-          send voter_registry, {:publish, region, %VoterStruct{name: name, pid: self()}}
+          send voter_registry, %VoterStruct{name: name, pid: self()}
           send cand_registry, {:subscribe, self()}
           loop(name, MapSet.new(), voting_fun)
         end
@@ -147,7 +128,7 @@ end
 # A Voter that participates in the Caucus
 defmodule Voter do
   use Voter.Mixin
-  # Issue a ballot for the voter's preferred candidate
+  # Submit a vote for this voter's top preference candidate still in the race
   # Name [Setof Candidate] [Setof Candidate] PID ([Setof Candidate] -> [Setof Candidate]) -> void
   defp vote(name, all_candidates, eligible_candidates, vote_leader, voting_fun) do
     sorted_candidates = voting_fun.(all_candidates)
@@ -162,7 +143,7 @@ end
 defmodule GreedyVoter do
   use Voter.Mixin
 
-  # Issue multiple ballots for the voter's preferred candidates
+  # Submit votes for multiple candidates in this voter's top preferences
   # Name [Setof Candidate] [Setof Candidate] PID ([Setof Candidate] -> [Setof Candidate]) -> void
   defp vote(name, all_candidates, eligible_candidates, vote_leader, voting_fun) do
     sorted_candidates = voting_fun.(all_candidates)
@@ -181,7 +162,7 @@ end
 defmodule StubbornVoter do
   use Voter.Mixin
 
-  # Issue a ballot for a voter's preferred candidate, regardless of their status in the race
+  # Submit a vote for the candidate's top preference, even if that candidate isn't in the race
   # Name [Setof Candidate] [Setof Candidate] PID ([Setof Candidate] -> [Setof Candidate]) -> void
   defp vote(name, all_candidates, _eligible_candidates, vote_leader, voting_fun) do
     sorted_candidates = voting_fun.(all_candidates)
@@ -193,7 +174,7 @@ end
 defmodule SleepyVoter do
   use Voter.Mixin
 
-  # Doesn't issue a ballot
+  # Doesn't issue a vote
   # 5 arguments -> void
   defp vote(_, _, _, _, _) do
     :noop
@@ -209,7 +190,7 @@ defmodule VoteLeader do
     spawn fn -> 
       send region_manager, %VoteLeader{pid: self()}
       Process.sleep(1000)
-      send voter_registry, {:msg, region, self()}
+      send voter_registry, {:msg, self()}
       setup_voting(MapSet.new(), MapSet.new(), candidate_registry, region_manager)
     end
   end
@@ -315,10 +296,10 @@ defmodule VoteLeader do
     num_votes = Enum.reduce(tally, 0, fn {_, count}, acc -> acc + count end)
     {frontrunner, their_votes} = Enum.max(tally, fn {_, count1}, {_, count2} -> count1 >= count2 end)
     if their_votes > (num_votes / 2) do
-      send region_manager, {:results, frontrunner}
+      send region_manager, {:caucus_winner, frontrunner}
     else
       {loser, _} = Enum.min(tally, fn {_, count1}, {_, count2} -> count1 <= count2 end)
-      Enum.each(candidates, fn %CandStruct{name: _, tax_rate: _, pid: pid} -> send pid, {:ballot, tally} end)
+      Enum.each(candidates, fn %CandStruct{name: _, tax_rate: _, pid: pid} -> send pid, {:tally, tally} end)
       IO.puts "Our loser is #{loser}!"
 
       setup_voting(confirmed_voters, MapSet.put(blacklist, cand_names[loser]), cand_registry, region_manager)
@@ -335,7 +316,7 @@ defmodule RegionManager do
   def determine_region(vote_leaders, results) do
     receive do
       %VoteLeader{pid: pid} -> determine_region(MapSet.put(vote_leaders, pid), results)
-      {:results, cand_name} ->
+      {:caucus_winner, cand_name} ->
         new_results = Map.update(results, cand_name, 1, &(&1 + 1))
         total_results = Enum.reduce(new_results, 0, fn {_, count}, acc -> acc + count end)
 
