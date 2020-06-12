@@ -9,7 +9,7 @@
 # a Candidate is a %CandStruct{name: Name, tax_rate: TaxRate, pid: PID}
 # a Voter is a %VoterStruct{name: Name, pid: PID}
 # a Subscription is a {:subscribe, PID}
-# a VoteRequest is a {:vote_request, [Setof Candidate], PID}
+# a Ballot is a {:ballot, [Setof Candidate], PID}
 # a Vote is a {:vote, Name, Name}
 # a VoteLeader is a %VoteLeader{pid: PID}
 # a Tally is a {:tally, [Mapof Name -> Number]}
@@ -90,6 +90,12 @@ defmodule AbstractRegistry do
   end
 end
 
+defmodule VoterRegistry do
+  def create(region) do
+    Process.register(AbstractRegistry.create(VoterStruct), region)
+  end
+end
+
 # The struct for a Voter declaration
 defmodule VoterStruct do
   defstruct [:name, :pid]
@@ -101,8 +107,9 @@ defmodule Voter.Mixin do
     quote do
       # Initialize a new voter
       # Name Region PID PID ([Setof Candidate] -> [Setof Candidate]) -> PID
-      def spawn(name, region, voter_registry, cand_registry, voting_fun) do
+      def spawn(name, region, cand_registry, voting_fun) do
         spawn fn -> 
+          voter_registry = Process.whereis region
           send voter_registry, %VoterStruct{name: name, pid: self()}
           send cand_registry, {:subscribe, self()}
           loop(name, MapSet.new(), voting_fun)
@@ -116,7 +123,7 @@ defmodule Voter.Mixin do
           %AbstractRegistry{values: new_candidates, type: CandStruct} ->
             IO.puts "Voter #{name} has received candidates! #{inspect new_candidates}"
             loop(name, new_candidates, voting_fun)
-          {:vote_request, eligible_candidates, vote_leader} ->
+          {:ballot, eligible_candidates, vote_leader} ->
             vote(name, candidates, eligible_candidates, vote_leader, voting_fun)
             loop(name, candidates, voting_fun)
         end
@@ -185,12 +192,12 @@ end
 defmodule VoteLeader do
   defstruct [:pid]
   # initialize the VoteLeader
-  # PID Region PID PID -> PID
-  def spawn(region, voter_registry, candidate_registry, region_manager) do
+  # Region PID PID -> PID
+  def spawn(region, candidate_registry, region_manager) do
     spawn fn -> 
       send region_manager, %VoteLeader{pid: self()}
       Process.sleep(1000)
-      send voter_registry, {:msg, self()}
+      send Process.whereis(region), {:msg, self()}
       setup_voting(MapSet.new(), MapSet.new(), candidate_registry, region_manager)
     end
   end
@@ -239,7 +246,7 @@ defmodule VoteLeader do
   # [Setof Voter] [Setof Candidate] PID -> void
   defp issue_votes(voters, candidates) do
     IO.puts "Issuing votes!"
-    Enum.each(voters, fn %VoterStruct{name: _, pid: pid} -> send pid, {:vote_request, candidates, self()} end)
+    Enum.each(voters, fn %VoterStruct{name: _, pid: pid} -> send pid, {:ballot, candidates, self()} end)
   end
 
   # Receive votes from voters and elect a winner if possible
