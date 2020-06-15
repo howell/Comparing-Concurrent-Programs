@@ -50,7 +50,7 @@ end
 defmodule StubbornCandidate do
 end
 
-# A pub/sub server for some type of Struct
+# A pub/sub server for data of some struct
 defmodule AbstractRegistry do
   defstruct [:values, :type]
 
@@ -85,105 +85,97 @@ defmodule AbstractRegistry do
     end
   end
 
+  # produce the payload delivered to subscribers of the server
   def the_package(values, type) do
     %AbstractRegistry{values: values, type: type}
   end
 end
 
+# Create and associate a Registry for VoterStructs with a Region
 defmodule VoterRegistry do
   def create(region) do
     Process.register(AbstractRegistry.create(VoterStruct), region)
   end
 end
 
-# The struct for a Voter declaration
+# The VoterStruct: see top
 defmodule VoterStruct do
   defstruct [:name, :pid]
 end
 
+# TODO define a VoteModule interface
 # Shared behavior between voters
-defmodule Voter.Mixin do
-  defmacro __using__(_) do
-    quote do
-      # Initialize a new voter
-      # Name Region PID PID ([Setof Candidate] -> [Setof Candidate]) -> PID
-      def spawn(name, region, cand_registry, voting_fun) do
-        spawn fn -> 
-          voter_registry = Process.whereis region
-          send voter_registry, %VoterStruct{name: name, pid: self()}
-          send cand_registry, {:subscribe, self()}
-          loop(name, MapSet.new(), voting_fun)
-        end
-      end
+defmodule Voter do
+  # Initialize a new voter
+  # Name Region PID PID ([Setof Candidate] -> [Setof Candidate]) VoteModule -> PID
+  def spawn(name, region, cand_registry, prioritize_cands, voting_strategy) do
+    spawn fn ->
+      voter_registry = Process.whereis region
+      send voter_registry, %VoterStruct{name: name, pid: self()}
+      send cand_registry, {:subscribe, self()}
+      loop(name, MapSet.new(), prioritize_cands, voting_strategy)
+    end
+  end
 
-      # Respond to messages sent to a voter
-      # Name [Setof Candidate] ([Enumerable Candidate] -> [Listof Candidate]) -> void
-      defp loop(name, candidates, voting_fun) do
-        receive do
-          %AbstractRegistry{values: new_candidates, type: CandStruct} ->
-            IO.puts "Voter #{name} has received candidates! #{inspect new_candidates}"
-            loop(name, new_candidates, voting_fun)
-          {:ballot, eligible_candidates, vote_leader} ->
-            vote(name, candidates, eligible_candidates, vote_leader, voting_fun)
-            loop(name, candidates, voting_fun)
-        end
-      end
+  # Respond to messages sent to a voter
+  # Name [Setof Candidate] ([Enumerable Candidate] -> [Listof Candidate]) -> void
+  defp loop(name, candidates, prioritize_cands, voting_strategy) do
+    receive do
+      %AbstractRegistry{values: new_candidates, type: CandStruct} ->
+        IO.puts "Voter #{name} has received candidates! #{inspect new_candidates}"
+        loop(name, new_candidates, prioritize_cands, voting_strategy)
+      {:ballot, eligible_candidates, vote_leader} ->
+        voting_strategy.vote(name, candidates, eligible_candidates, vote_leader, prioritize_cands)
+        loop(name, candidates, prioritize_cands, voting_strategy)
     end
   end
 end
 
 # A Voter that participates in the Caucus
-defmodule Voter do
-  use Voter.Mixin
+defmodule RegularVoting do
   # Submit a vote for this voter's top preference candidate still in the race
   # Name [Setof Candidate] [Setof Candidate] PID ([Setof Candidate] -> [Setof Candidate]) -> void
-  defp vote(name, all_candidates, eligible_candidates, vote_leader, voting_fun) do
-    sorted_candidates = voting_fun.(all_candidates)
-    %CandStruct{name: voting_for, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) end)
+  def vote(name, all_candidates, eligible_candidates, vote_leader, prioritize_cands) do
+    candidate_prefs = prioritize_cands.(all_candidates)
+    %CandStruct{name: voting_for, tax_rate: _, pid: _} = Enum.find(candidate_prefs, fn cand -> MapSet.member?(eligible_candidates, cand) end)
     IO.puts "Voter #{name} is voting for #{voting_for}!"
     send vote_leader, {:vote, name, voting_for}
-    loop(name, all_candidates, voting_fun)
   end
 end
 
 # A Voter that votes for multiple candidates
-defmodule GreedyVoter do
-  use Voter.Mixin
-
+defmodule GreedyVoting do
   # Submit votes for multiple candidates in this voter's top preferences
   # Name [Setof Candidate] [Setof Candidate] PID ([Setof Candidate] -> [Setof Candidate]) -> void
-  defp vote(name, all_candidates, eligible_candidates, vote_leader, voting_fun) do
-    sorted_candidates = voting_fun.(all_candidates)
-    %CandStruct{name: voting_for, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) end)
-    %CandStruct{name: second_vote, tax_rate: _, pid: _} = Enum.find(sorted_candidates, fn cand -> MapSet.member?(eligible_candidates, cand) && cand.name != voting_for end)
+  def vote(name, all_candidates, eligible_candidates, vote_leader, prioritize_cands) do
+    candidate_prefs = prioritize_cands.(all_candidates)
+    %CandStruct{name: voting_for, tax_rate: _, pid: _} = Enum.find(candidate_prefs, fn cand -> MapSet.member?(eligible_candidates, cand) end)
+    %CandStruct{name: second_vote, tax_rate: _, pid: _} = Enum.find(candidate_prefs, fn cand -> MapSet.member?(eligible_candidates, cand) && cand.name != voting_for end)
     IO.puts "Greedy voter #{name} is voting for multiple candidates!"
+
     send vote_leader, {:vote, name, voting_for}
-    send(vote_leader, {:vote, name, if (second_vote) do
-                        second_vote
-                      else
-                        voting_for
-                      end})
+    if (second_vote) do
+      send vote_leader, {:vote, name, second_vote}
+    else
+      send vote_leader, {:vote, name, voting_for}
+    end
   end
 end
 
-defmodule StubbornVoter do
-  use Voter.Mixin
-
+defmodule StubbornVoting do
   # Submit a vote for the candidate's top preference, even if that candidate isn't in the race
   # Name [Setof Candidate] [Setof Candidate] PID ([Setof Candidate] -> [Setof Candidate]) -> void
-  defp vote(name, all_candidates, _eligible_candidates, vote_leader, voting_fun) do
-    sorted_candidates = voting_fun.(all_candidates)
-    [%CandStruct{name: voting_for, tax_rate: _, pid: _} | _] = sorted_candidates
+  def vote(name, all_candidates, _eligible_candidates, vote_leader, prioritize_cands) do
+    candidate_prefs = prioritize_cands.(all_candidates)
+    [%CandStruct{name: voting_for, tax_rate: _, pid: _} | _] = candidate_prefs 
     send vote_leader, {:vote, name, voting_for}
   end
 end
 
-defmodule SleepyVoter do
-  use Voter.Mixin
-
+defmodule SleepThroughVoting do
   # Doesn't issue a vote
   # 5 arguments -> void
-  defp vote(_, _, _, _, _) do
+  def vote(_, _, _, _, _) do
     :noop
   end
 end
