@@ -15,7 +15,21 @@
 # a Tally is a {:tally, [Mapof Name -> Number]}
 # a CaucusWinner is a {:caucus_winner, Name}
 # an AbstractRegistry response is a %AbstractRegistry{values: [Setof X], type: X}
+#
+# a VotingStrategy is a Module with a function that contains a `vote` function with the signature:
+#   Name [Setof Candidate] [Setof Candidate] PID ([Setof Candidate] -> [Setof Candidate]) -> void
 
+# a CandData is a %CandData{cands: [Setof CandStruct], lookup: [Mapof Name -> CandStruct], blacklist: [Setof CandStruct], tally: [Mapof Name -> Number]}
+# CandData represents the status of Candidates during a Vote
+defmodule CandData do
+  defstruct [:cands, :lookup, :blacklist, :tally]
+end
+
+# a VoterData is a %VoterData{voters: [Setof VoterStruct], lookup: [Mapof Name -> VoterStruct], votes: [Mapof Name -> Name]}
+# VoterData represents the status of Voters during a Vote
+defmodule VoterData do
+  defstruct [:voters, :lookup, :votes]
+end
 
 # A Candidate registered for election in the Caucus
 defmodule CandStruct do
@@ -103,11 +117,10 @@ defmodule VoterStruct do
   defstruct [:name, :pid]
 end
 
-# TODO define a VoteModule interface
 # Shared behavior between voters
 defmodule Voter do
   # Initialize a new voter
-  # Name Region PID PID ([Setof Candidate] -> [Setof Candidate]) VoteModule -> PID
+  # Name Region PID PID ([Setof Candidate] -> [Setof Candidate]) VotingStrategy -> PID
   def spawn(name, region, cand_registry, prioritize_cands, voting_strategy) do
     spawn fn ->
       voter_registry = Process.whereis region
@@ -163,7 +176,7 @@ defmodule GreedyVoting do
 end
 
 defmodule StubbornVoting do
-  # Submit a vote for the candidate's top preference, even if that candidate isn't in the race
+  # Submit a vote for the voter's top preference, even if that candidate isn't in the race
   # Name [Setof Candidate] [Setof Candidate] PID ([Setof Candidate] -> [Setof Candidate]) -> void
   def vote(name, all_candidates, _eligible_candidates, vote_leader, prioritize_cands) do
     candidate_prefs = prioritize_cands.(all_candidates)
@@ -208,18 +221,18 @@ defmodule VoteLeader do
       valid_candidates = MapSet.difference(candidates, blacklist)
       issue_votes(voters, valid_candidates)
       initial_tally = Enum.reduce(valid_candidates, %{}, fn cand, acc -> Map.put(acc, cand.name, 0) end)
-      whitelisted_voters = Enum.reduce(voters, %{}, fn voter, acc -> Map.put(acc, voter.name, voter) end)
+      voter_lookup = Enum.reduce(voters, %{}, fn voter, acc -> Map.put(acc, voter.name, voter) end)
       Process.send_after self(), :timeout, 1000
 
       vote_loop(
-        voters, 
-        valid_candidates, 
-        Enum.reduce(valid_candidates, %{}, fn cand, acc -> Map.put(acc, cand.name, cand) end), 
-        blacklist, 
-        initial_tally, 
-        %{}, 
-        whitelisted_voters, 
-        candidate_registry, 
+        %VoterData{voters: voters, lookup: voter_lookup, votes: %{}},
+        %CandData{
+          cands: valid_candidates, 
+          lookup: Enum.reduce(valid_candidates, %{}, fn cand, acc -> Map.put(acc, cand.name, cand) end), 
+          blacklist: blacklist, 
+          tally: initial_tally
+        },
+        candidate_registry,
         region_manager
       )
     else
@@ -242,66 +255,65 @@ defmodule VoteLeader do
   end
 
   # Receive votes from voters and elect a winner if possible
-  # [Setof Voter] [Setof Candidate] [Mapof Name -> Candidate] [Mapof Name -> Number] PID -> void
-  defp vote_loop(voters, candidates, cand_names, blacklist, tally, voting_record, voter_whitelist, cand_registry, region_manager) do
-    receive do
-      :timeout ->
-        conclude_vote(candidates, cand_names, blacklist, tally, voting_record, voter_whitelist, cand_registry, region_manager)
-      {:vote, voter_name, cand_name} -> 
-        cond do
-          # CASE 1: Stubborn Voter || CASE 2: Greedy Voter
-          !Map.has_key?(cand_names, cand_name) || Map.has_key?(voting_record, voter_name) ->
-            IO.puts "Voter #{inspect voter_name} has been caught trying to vote for a dropped candidate!"
-            update_tally_fun = fn old_val -> 
-              if Map.has_key?(cand_names, voting_record[voter_name]) do
-                old_val - 1 
-              else
-                0
-              end
-            end
+  # VoterData CandData PID PID -> void
+  defp vote_loop(voter_data, cand_data, cand_registry, region_manager) do
+    if MapSet.size(voter_data.voters) == Kernel.map_size(voter_data.votes) do
+      conclude_vote(voter_data, cand_data, cand_registry, region_manager)
+    else
+      receive do
+        :timeout ->
+          conclude_vote(voter_data, cand_data, cand_registry, region_manager)
+        {:vote, voter_name, cand_name} -> 
+          cond do
+            # TODO add 'voter has already been eliminated'
+            # CASE 1: Stubborn Voter || CASE 2: Greedy Voter
+            !Map.has_key?(cand_data.lookup, cand_name) || Map.has_key?(voter_data.votes, voter_name) ->
+              IO.puts "Voter #{inspect voter_name} has been caught trying to vote for a dropped candidate!"
 
-            vote_loop(
-              MapSet.delete(voters, voter_whitelist[voter_name]),
-              candidates,
-              cand_names,
-              blacklist,
-              Map.update(tally, voting_record[voter_name], 0, update_tally_fun),
-              Map.delete(voting_record, voter_name),
-              Map.delete(voter_whitelist, voter_name),
-              cand_registry,
-              region_manager
-            )
-          true ->
-            IO.puts "Voter #{inspect voter_name} is voting for candidate #{inspect cand_name}!"
-            vote_loop(
-              voters,
-              candidates,
-              cand_names,
-              blacklist,
-              Map.update(tally, cand_name, 1, &(&1 + 1)),
-              Map.put(voting_record, voter_name, cand_name),
-              voter_whitelist,
-              cand_registry,
-              region_manager
-            )
-        end
+              new_vote_count = if Map.has_key?(cand_data.lookup, voter_data.votes[voter_name]), do: cand_data.tally[voter_data.votes[voter_name]] - 1, else: 0
+              new_tally = Map.put(cand_data.tally, voter_data.lookup[voter_name], new_vote_count)
+
+              vote_loop(
+                %VoterData{
+                  voters: MapSet.delete(voter_data.voters, voter_data.lookup[voter_name]),
+                  lookup: Map.delete(voter_data.lookup, voter_name),
+                  votes:  Map.delete(voter_data.votes, voter_name)
+                },
+                Map.put(cand_data, :tally, new_tally),
+                cand_registry,
+                region_manager
+              )
+            true ->
+              IO.puts "Voter #{inspect voter_name} is voting for candidate #{inspect cand_name}!"
+              new_voting_record = Map.put(voter_data.votes, voter_name, cand_name)
+              new_tally = Map.update(cand_data.tally, cand_name, 1, &(&1 + 1))
+
+              vote_loop(
+                Map.put(voter_data, :votes, new_voting_record), 
+                Map.put(cand_data, :tally, new_tally), 
+                cand_registry, 
+                region_manager
+              )
+          end
+      end
     end
+
   end
 
   # Determine a winner, or if there isn't one, remove a loser and start next voting loop
-  # [Setof Candidate] [Mapof Name -> Candidate] [Setof Candidate] [Mapof Name -> Number] [Mapof Name -> Name] [Setof Voter] PID PID -> void
-  defp conclude_vote(candidates, cand_names, blacklist, tally, voting_record, voter_whitelist, cand_registry, region_manager) do
-    confirmed_voters = Enum.reduce(voting_record, MapSet.new, fn {voter_name, _}, acc -> MapSet.put(acc, voter_whitelist[voter_name]) end)
-    num_votes = Enum.reduce(tally, 0, fn {_, count}, acc -> acc + count end)
-    {frontrunner, their_votes} = Enum.max(tally, fn {_, count1}, {_, count2} -> count1 >= count2 end)
+  # VoterData CandData PID PID -> void
+  defp conclude_vote(voter_data, cand_data, cand_registry, region_manager) do
+    confirmed_voters = Enum.reduce(voter_data.votes, MapSet.new, fn {voter_name, _}, acc -> MapSet.put(acc, voter_data.lookup[voter_name]) end)
+    num_votes = Enum.reduce(cand_data.tally, 0, fn {_, count}, acc -> acc + count end)
+    {frontrunner, their_votes} = Enum.max(cand_data.tally, fn {_, count1}, {_, count2} -> count1 >= count2 end)
     if their_votes > (num_votes / 2) do
       send region_manager, {:caucus_winner, frontrunner}
     else
-      {loser, _} = Enum.min(tally, fn {_, count1}, {_, count2} -> count1 <= count2 end)
-      Enum.each(candidates, fn %CandStruct{name: _, tax_rate: _, pid: pid} -> send pid, {:tally, tally} end)
+      {loser, _} = Enum.min(cand_data.tally, fn {_, count1}, {_, count2} -> count1 <= count2 end)
+      Enum.each(cand_data.cands, fn %CandStruct{name: _, tax_rate: _, pid: pid} -> send pid, {:tally, cand_data.tally} end)
       IO.puts "Our loser is #{loser}!"
 
-      setup_voting(confirmed_voters, MapSet.put(blacklist, cand_names[loser]), cand_registry, region_manager)
+      setup_voting(confirmed_voters, MapSet.put(cand_data.blacklist, cand_data.lookup[loser]), cand_registry, region_manager)
     end
   end
 end
