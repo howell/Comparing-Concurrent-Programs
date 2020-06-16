@@ -86,6 +86,7 @@ defmodule AbstractRegistry do
       # Add a new subscriber to the list and update them with the latest
       {:subscribe, pid} -> 
         IO.puts "We have a new subscriber! #{inspect pid} for #{inspect type}!"
+        Process.monitor pid
         send pid, the_package(values, type)
         loop(type, values, MapSet.put(subscribers, pid))
       # Send a single-instance message to a process of the most recent snapshot of data
@@ -97,6 +98,9 @@ defmodule AbstractRegistry do
       {:remove, val} ->
         IO.puts "Value #{inspect val} is removing itself from the Registry!"
         loop(type, MapSet.delete(values, val), subscribers)
+      {:DOWN, _, _, dead_pid, _} ->
+        IO.puts "Subscriber #{inspect dead_pid} has died!"
+        loop(type, values, MapSet.delete(subscribers, dead_pid))
     end
   end
 
@@ -377,6 +381,15 @@ defmodule MockSubscriber do
   defp loop do
     receive do
       any -> IO.puts inspect(any)
+    end
+  end
+end
+
+defmodule SuicidalSubscriber do
+  def mock_spawn(pubsub) do
+    spawn fn ->
+      send pubsub, {:subscribe, self()}
+      Process.exit(self(), :kill)
     end
   end
 end

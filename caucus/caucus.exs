@@ -25,6 +25,7 @@ Voter.spawn("STU", :a, cand_registry, StupidSort.generate("Biden"), RegularVotin
 Voter.spawn("VWX", :a, cand_registry, StupidSort.generate("Biden"), RegularVoting)
 Voter.spawn("YZ1", :a, cand_registry, StupidSort.generate("Biden"), RegularVoting)
 Voter.spawn("g", :a, cand_registry, StupidSort.generate("Biden"), SleepThroughVoting)
+SuicidalSubscriber.mock_spawn(cand_registry)
 VoteLeader.spawn(:a, cand_registry, region_manager)
 
 VoterRegistry.create(:b)
