@@ -31,10 +31,10 @@ defmodule CandidateState do
   def next_state(s, _, _), do: s
 
   property "Will not withdraw from race if gets enough votes" do
-    forall cmds <- commands(__MODULE__) do
-      {_, _, res} = run_commands(__MODULE__, cmds)
+    trap_exit(forall cmds <- commands(__MODULE__) do
+      {_, state, res} = run_commands(__MODULE__, cmds)
       res == :ok
-    end
+    end)
   end
 end
 
@@ -43,9 +43,15 @@ defmodule RegistryState do
   use PropCheck
   use PropCheck.StateM
 
+  def oneof_struct(s), do: elements(MapSet.to_list(s.data))
+
   defmodule RegistryInterface do
     def send_value(pid, val) do
       send pid, val
+    end
+
+    def remove_value(pid, val) do
+      send pid, {:remove, val}
     end
   end
 
@@ -55,17 +61,29 @@ defmodule RegistryState do
   end
 
   def command(%{pid: pid}) do
-    let {name, tr, cand_pid} <- {char_list(), nat(), any()} do
-      {:call, RegistryInterface, :send_value, [pid, %CandStruct{name: name, tax_rate: tr, pid: cand_pid}]}
+    let {name, tr, cand_pid} <- {char_list(), nat(), nat()} do
+      frequency([{3, {:call, RegistryInterface, :send_value, [pid, %CandStruct{name: name, tax_rate: tr, pid: cand_pid}]}},
+                 {1, {:call, RegistryInterface, :remove_value, [pid, %CandStruct{name: name, tax_rate: tr, pid: cand_pid}]}}])
     end
   end
 
-  def next_state(s, _, {:call, _, _, struct}) do
+  def next_state(s, _, {:call, _, :send_value, struct}) do
     Map.put(s, :data, MapSet.put(s.data, struct))
   end
 
+  def next_state(s, _, {:call, _, :remove_value, struct}) do
+    Map.put(s, :data, MapSet.delete(s.data, struct))
+  end
+
+  def precondition(s, {:call, _, :remove_value, struct}) do
+    MapSet.member?(s.data, struct)
+  end
+
   def precondition(_, _), do: true
-  def postcondition(_, _, _), do: true
+
+  def postcondition(%{pid: pid}, _, _) do
+    Process.alive?(pid)
+  end
 
   property "Will work" do
     forall cmds <- commands(__MODULE__) do
@@ -73,11 +91,5 @@ defmodule RegistryState do
       res == :ok
     end
   end
-
-    # types of commands:
-    # 1. somebody publishes a voter struct
-    # 2. somebody subscribes
-    # 3. somebody removes a struct from the registry--should only work if it exists
-    # 4. somebody sends a msg request
 end
 

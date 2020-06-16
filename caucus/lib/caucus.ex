@@ -79,7 +79,7 @@ defmodule AbstractRegistry do
     receive do
       # Receiving a struct of the module Type, update all current subscribers with new data
       %^type{} = new_val ->
-        IO.puts "New value: #{inspect new_val} for #{inspect type}!"
+        # IO.puts "New value: #{inspect new_val} for #{inspect type}!"
         new_values = MapSet.put(values, new_val)
         Enum.each(subscribers, fn s -> send s, the_package(values, type) end)
         loop(type, new_values, subscribers)
