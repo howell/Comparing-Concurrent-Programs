@@ -1,5 +1,4 @@
 defmodule RegistryProps do
-  use ExUnit.Case
   use PropCheck
 
   def three(_arg) do
