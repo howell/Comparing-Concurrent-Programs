@@ -23,7 +23,7 @@ defmodule CandidateState do
 
   def precondition(_, {:call, _, _, [_, map]}) do
     [h | _] = Map.values(map)
-    Kernel.map_size(map) == 1 && h > 5
+    Kernel.map_size(map) == 1 && h > 0
   end
 
   def postcondition(_, _, _), do: true
@@ -38,25 +38,46 @@ defmodule CandidateState do
   end
 end
 
-"""
 defmodule RegistryState do
+  use ExUnit.Case
+  use PropCheck
+  use PropCheck.StateM
+
   defmodule RegistryInterface do
+    def send_value(pid, val) do
+      send pid, val
+    end
   end
 
   def initial_state do
-    pid = AbstractRegistry.create(Voter)
-    %{type: Voter, data: MapSet.new, subscribers: MapSet.new}
+    pid = AbstractRegistry.create(CandStruct)
+    %{pid: pid, type: Voter, data: MapSet.new, subscribers: MapSet.new}
   end
 
-  def command(%{type: type, data: data, subscribers: subscribers}) do
-    oneof([
-    ])
+  def command(%{pid: pid}) do
+    let {name, tr, cand_pid} <- {char_list(), nat(), any()} do
+      {:call, RegistryInterface, :send_value, [pid, %CandStruct{name: name, tax_rate: tr, pid: cand_pid}]}
+    end
+  end
+
+  def next_state(s, _, {:call, _, _, struct}) do
+    Map.put(s, :data, MapSet.put(s.data, struct))
+  end
+
+  def precondition(_, _), do: true
+  def postcondition(_, _, _), do: true
+
+  property "Will work" do
+    forall cmds <- commands(__MODULE__) do
+      {_, _, res} = run_commands(__MODULE__, cmds)
+      res == :ok
+    end
+  end
 
     # types of commands:
     # 1. somebody publishes a voter struct
     # 2. somebody subscribes
     # 3. somebody removes a struct from the registry--should only work if it exists
     # 4. somebody sends a msg request
-  end
 end
-"""
+
