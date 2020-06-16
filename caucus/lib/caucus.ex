@@ -74,6 +74,7 @@ defmodule AbstractRegistry do
     spawn fn -> loop(type, MapSet.new(), MapSet.new()) end
   end
 
+  # TODO publish message that includes the PID of the publisher, + monitoring for everybody
   def loop(type, values, subscribers) do
     receive do
       # Receiving a struct of the module Type, update all current subscribers with new data
@@ -265,8 +266,10 @@ defmodule VoteLeader do
           conclude_vote(voter_data, cand_data, cand_registry, region_manager)
         {:vote, voter_name, cand_name} -> 
           cond do
-            # TODO add 'voter has already been eliminated'
-            # CASE 1: Stubborn Voter || CASE 2: Greedy Voter
+            # CASE 1: Already eliminated Voter
+            !Map.has_key?(voter_data.lookup, voter_name) ->
+              vote_loop(voter_data, cand_data, cand_registry, region_manager)
+            # CASE 2: Stubborn Voter || CASE 3: Greedy Voter
             !Map.has_key?(cand_data.lookup, cand_name) || Map.has_key?(voter_data.votes, voter_name) ->
               IO.puts "Voter #{inspect voter_name} has been caught trying to vote for a dropped candidate!"
 
@@ -283,6 +286,7 @@ defmodule VoteLeader do
                 cand_registry,
                 region_manager
               )
+            # CASE 4: Voter checks out
             true ->
               IO.puts "Voter #{inspect voter_name} is voting for candidate #{inspect cand_name}!"
               new_voting_record = Map.put(voter_data.votes, voter_name, cand_name)
