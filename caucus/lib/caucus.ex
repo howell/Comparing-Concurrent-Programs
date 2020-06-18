@@ -307,7 +307,7 @@ defmodule VoteLeader do
                   lookup: Map.delete(voter_data.lookup, voter_name),
                   votes:  Map.delete(voter_data.votes, voter_name)
                 },
-                Map.put(cand_data, :tally, new_tally),
+                %{cand_data | tally: new_tally},
                 cand_registry,
                 region_manager
               )
@@ -318,8 +318,8 @@ defmodule VoteLeader do
               new_tally = Map.update(cand_data.tally, cand_name, 1, &(&1 + 1))
 
               vote_loop(
-                Map.put(voter_data, :votes, new_voting_record), 
-                Map.put(cand_data, :tally, new_tally), 
+                %{voter_data | votes: new_voting_record},
+                %{cand_data  | tally: new_tally},
                 cand_registry, 
                 region_manager
               )
