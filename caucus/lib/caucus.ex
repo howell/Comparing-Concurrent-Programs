@@ -14,6 +14,7 @@
 # a VoteLeader is a %VoteLeader{pid: PID}
 # a Tally is a {:tally, [Mapof Name -> Number]}
 # a CaucusWinner is a {:caucus_winner, Name}
+# a Loser is a :loser
 # an AbstractRegistry response is a %AbstractRegistry{values: [Setof X], type: X}
 #
 # a VotingStrategy is a Module with a function that contains a `vote` function with the signature:
@@ -42,7 +43,7 @@ defmodule Candidate do
   # Name TaxRate Threshold PID -> PID
   def spawn(name, tax_rate, threshold, cand_registry) do
     spawn fn ->
-      send cand_registry, %CandStruct{name: name, tax_rate: tax_rate, pid: self()}
+      send cand_registry, {:publish, self(), %CandStruct{name: name, tax_rate: tax_rate, pid: self()}}
       loop(name, tax_rate, threshold, cand_registry)
     end
   end
@@ -57,11 +58,32 @@ defmodule Candidate do
         else
           loop(name, tax_rate, threshold, cand_registry)
         end
+      :loser -> :noop
     end
   end
 end
 
 defmodule StubbornCandidate do
+  # Initialize and setup a Candidate for election
+  # Name TaxRate Threshold PID -> PID
+  def spawn(name, tax_rate, cand_registry) do
+    spawn fn ->
+      send cand_registry, %CandStruct{name: name, tax_rate: tax_rate, pid: self()}
+      loop(name, tax_rate, cand_registry)
+    end
+  end
+
+  # Hold conversations with other actors
+  # Name TaxRate Threshold PID -> void
+  defp loop(name, tax_rate, cand_registry) do
+    receive do
+      :loser ->
+        send cand_registry, {:remove, self()}
+        send cand_registry, {:publish, self(), %CandStruct{name: name, tax_rate: tax_rate, pid: self()}}
+      true ->
+        loop(name, tax_rate, cand_registry)
+    end
+  end
 end
 
 # A pub/sub server for data of some struct
@@ -71,36 +93,35 @@ defmodule AbstractRegistry do
   # initialize a new AbstractRegistry
   def create(type) do
     IO.puts "We exist with type #{inspect type}!"
-    spawn fn -> loop(type, MapSet.new(), MapSet.new()) end
+    spawn fn -> loop(type, MapSet.new(), Map.new(), MapSet.new()) end
   end
 
-  # TODO publish message that includes the PID of the publisher, + monitoring for everybody
-  def loop(type, values, subscribers) do
+  def loop(type, values, publications, subscribers) do
     receive do
       # Receiving a struct of the module Type, update all current subscribers with new data
-      %^type{} = new_val ->
-        IO.puts "New value: #{inspect new_val} for #{inspect type}!"
+      {:publish, pid, %^type{} = new_val} ->
+        IO.puts "New value: #{inspect new_val} for #{inspect type} from #{inspect pid}!"
         new_values = MapSet.put(values, new_val)
         Enum.each(subscribers, fn s -> send s, the_package(values, type) end)
-        loop(type, new_values, subscribers)
+        loop(type, new_values, Map.put(publications, pid, new_val), subscribers)
       # Add a new subscriber to the list and update them with the latest
       {:subscribe, pid} -> 
         IO.puts "We have a new subscriber! #{inspect pid} for #{inspect type}!"
         Process.monitor pid
         send pid, the_package(values, type)
-        loop(type, values, MapSet.put(subscribers, pid))
+        loop(type, values, publications, MapSet.put(subscribers, pid))
       # Send a single-instance message to a process of the most recent snapshot of data
       {:msg, pid} ->
         IO.puts "Process #{inspect pid} is requesting a message!"
         send pid, the_package(values, type)
-        loop(type, values, subscribers)
+        loop(type, values, publications, subscribers)
       # Remove a piece of data from the published data
-      {:remove, val} ->
-        IO.puts "Value #{inspect val} is removing itself from the Registry!"
-        loop(type, MapSet.delete(values, val), subscribers)
+      {:remove, pid} ->
+        IO.puts "Actor #{inspect pid} is removing itself from the Registry!"
+        loop(type, MapSet.delete(values, publications[pid]), Map.delete(publications, pid), subscribers)
       {:DOWN, _, _, dead_pid, _} ->
-        IO.puts "Subscriber #{inspect dead_pid} has died!"
-        loop(type, values, MapSet.delete(subscribers, dead_pid))
+        IO.puts "Actor #{inspect dead_pid} has died!"
+        loop(type, MapSet.delete(values, publications[dead_pid]), Map.delete(publications, dead_pid), MapSet.delete(subscribers, dead_pid))
     end
   end
 
@@ -129,7 +150,7 @@ defmodule Voter do
   def spawn(name, region, cand_registry, prioritize_cands, voting_strategy) do
     spawn fn ->
       voter_registry = Process.whereis region
-      send voter_registry, %VoterStruct{name: name, pid: self()}
+      send voter_registry, {:publish, self(), %VoterStruct{name: name, pid: self()}}
       send cand_registry, {:subscribe, self()}
       loop(name, MapSet.new(), prioritize_cands, voting_strategy)
     end
@@ -319,6 +340,8 @@ defmodule VoteLeader do
     else
       {loser, _} = Enum.min(cand_data.tally, fn {_, count1}, {_, count2} -> count1 <= count2 end)
       Enum.each(cand_data.cands, fn %CandStruct{name: _, tax_rate: _, pid: pid} -> send pid, {:tally, cand_data.tally} end)
+      %CandStruct{name: _, tax_rate: _, pid: losing_pid} = cand_data.lookup[loser]
+      send losing_pid, :loser
       IO.puts "Our loser is #{loser}!"
 
       setup_voting(confirmed_voters, MapSet.put(cand_data.blacklist, cand_data.lookup[loser]), cand_registry, region_manager)
