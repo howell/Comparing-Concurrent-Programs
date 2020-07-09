@@ -226,7 +226,6 @@ defmodule VoteLeader do
   # Region PID PID -> PID
   def spawn(region, candidate_registry, region_manager) do
     spawn fn -> 
-      send region_manager, %VoteLeader{pid: self()}
       Process.sleep(1000)
       send Process.whereis(region), {:msg, self()}
       setup_voting(MapSet.new(), MapSet.new(), candidate_registry, region_manager)
@@ -335,6 +334,7 @@ defmodule VoteLeader do
     confirmed_voters = Enum.reduce(voter_data.votes, MapSet.new, fn {voter_name, _}, acc -> MapSet.put(acc, voter_data.lookup[voter_name]) end)
     num_votes = Enum.reduce(cand_data.tally, 0, fn {_, count}, acc -> acc + count end)
     {frontrunner, their_votes} = Enum.max(cand_data.tally, fn {_, count1}, {_, count2} -> count1 >= count2 end)
+    IO.puts "The frontrunner received #{their_votes} votes, out of #{num_votes} total votes"
     if their_votes > (num_votes / 2) do
       send region_manager, {:caucus_winner, frontrunner}
     else
@@ -351,22 +351,30 @@ end
 
 # Aggregates the results of many caucuses to determine a winner for a region
 defmodule RegionManager do
-  def spawn do
-    spawn fn -> determine_region(MapSet.new(), %{}) end
+  def spawn(regions, candidate_registry) do
+    spawn fn ->
+      initialize_regions(regions, candidate_registry)
+      determine_region(regions, %{})
+    end
   end
 
-  def determine_region(vote_leaders, results) do
+  def initialize_regions(regions, candidate_registry) do
+    for region <- regions do
+      VoteLeader.spawn(region, candidate_registry, self())
+    end
+  end
+
+  def determine_region(regions, results) do
     receive do
-      %VoteLeader{pid: pid} -> determine_region(MapSet.put(vote_leaders, pid), results)
       {:caucus_winner, cand_name} ->
         new_results = Map.update(results, cand_name, 1, &(&1 + 1))
         total_results = Enum.reduce(new_results, 0, fn {_, count}, acc -> acc + count end)
 
-        if MapSet.size(vote_leaders) == total_results do
+        if length(regions) == total_results do
           {victor_name, _} = Enum.max(new_results, fn {_, count1}, {_, count2} -> count1 >= count2 end)
           IO.puts "The winner of the region is: #{inspect victor_name}!"
         else
-          determine_region(vote_leaders, new_results)
+          determine_region(regions, new_results)
         end
     end
   end

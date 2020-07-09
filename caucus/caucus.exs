@@ -1,5 +1,3 @@
-region_manager = RegionManager.spawn
-
 cand_registry = AbstractRegistry.create(CandStruct)
 
 Candidate.spawn("Bernie", 50, 0, cand_registry)
@@ -26,7 +24,6 @@ Voter.spawn("VWX", :a, cand_registry, StupidSort.generate("Biden"), RegularVotin
 Voter.spawn("YZ1", :a, cand_registry, StupidSort.generate("Biden"), RegularVoting)
 Voter.spawn("g", :a, cand_registry, StupidSort.generate("Biden"), SleepThroughVoting)
 SuicidalSubscriber.mock_spawn(cand_registry)
-VoteLeader.spawn(:a, cand_registry, region_manager)
 
 VoterRegistry.create(:b)
 
@@ -39,7 +36,6 @@ Voter.spawn("6", :b, cand_registry, StupidSort.generate("Biden"), RegularVoting)
 Voter.spawn("7", :b, cand_registry, StupidSort.generate("Biden"), RegularVoting)
 Voter.spawn("8", :b, cand_registry, StupidSort.generate("Biden"), RegularVoting)
 Voter.spawn("9", :b, cand_registry, StupidSort.generate("Biden"), RegularVoting)
-VoteLeader.spawn(:b, cand_registry, region_manager)
 
 VoterRegistry.create(:c)
 
@@ -48,7 +44,6 @@ Voter.spawn("11", :c, cand_registry, StupidSort.generate("Bernie"), RegularVotin
 Voter.spawn("12", :c, cand_registry, StupidSort.generate("Bernie"), RegularVoting)
 Voter.spawn("13", :c, cand_registry, StupidSort.generate("Bernie"), RegularVoting)
 Voter.spawn("14", :c, cand_registry, StupidSort.generate("Bernie"), RegularVoting)
-VoteLeader.spawn(:c, cand_registry, region_manager)
 
 VoterRegistry.create(:d)
 
@@ -57,7 +52,6 @@ Voter.spawn("15", :d, cand_registry, StupidSort.generate("Tulsi"), RegularVoting
 Voter.spawn("16", :d, cand_registry, StupidSort.generate("Tulsi"), RegularVoting)
 Voter.spawn("17", :d, cand_registry, StupidSort.generate("Tulsi"), RegularVoting)
 Voter.spawn("18", :d, cand_registry, StupidSort.generate("Tulsi"), RegularVoting)
-VoteLeader.spawn(:d, cand_registry, region_manager)
 
 VoterRegistry.create(:e)
 
@@ -66,8 +60,8 @@ Voter.spawn("20", :e, cand_registry, StupidSort.generate("6"), RegularVoting)
 Voter.spawn("21", :e, cand_registry, StupidSort.generate("6"), RegularVoting)
 Voter.spawn("22", :e, cand_registry, StupidSort.generate("6"), RegularVoting)
 Voter.spawn("23", :e, cand_registry, StupidSort.generate("6"), RegularVoting)
-VoteLeader.spawn(:e, cand_registry, region_manager)
 
+region_manager = RegionManager.spawn([:a, :b, :c, :d, :e], cand_registry)
 
 ref = Process.monitor(region_manager)
 
