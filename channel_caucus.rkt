@@ -389,21 +389,6 @@
                  (define-values (new-whitelist new-voting-record) (try-cast-vote name candidate whitelist voting-record))
                  (conclude-vote? new-whitelist new-voting-record)]))
 
-                 #|
-              (match-lambda
-                [(vote name candidate)
-                 (cond
-                   [(not (hash-has-key? whitelist name)) 
-                    (log-caucus-evt "Invalid voter ~a has tried to vote!" name)
-                    (conclude-vote? whitelist voting-record)]
-                   [(hash-has-key? voting-record name)
-                    (log-caucus-evt "Voter ~a has already voted! ~a is no longer a valid voter!" name name)
-                    (conclude-vote? (hash-remove whitelist name) (hash-remove voting-record name))]
-                   [(andmap (λ (cand) (not (string=? candidate (candidate-name cand)))) (set->list candidates)) 
-                    (log-caucus-evt "Voter ~a voted for candidate ~a, who isn't currently an eligible candidate!" name candidate)
-                    (conclude-vote? (hash-remove whitelist name) voting-record)]
-                   [else (conclude-vote? whitelist (hash-set voting-record name candidate))])]))
-                |#
             (handle-evt
               vote-timeout
               (λ (_) 
@@ -437,10 +422,11 @@
            (define num-winners (for/sum ([num-of-votes (in-hash-values new-results)]) num-of-votes))
            (cond
              [(= num-winners (length regions))
-              (define front-runner (argmax (λ (pair) (cdr pair)) (hash->list new-results)))
-              (define front-runner-name (car front-runner))
-              (log-caucus-evt "The winner of the region is ~a!" front-runner-name)
-              (channel-put main-chan front-runner-name)]
+              (define most-votes (cdr (argmax (λ (pair) (cdr pair)) (hash->list new-results))))
+              (define front-runners (filter (λ (pair) (= most-votes (cdr pair))) (hash->list new-results)))
+              (define front-runner-names (map (λ (cand) (car cand)) front-runners))
+              (log-caucus-evt "The candidates with the most votes across the regions are ~a!" front-runner-names)
+              (channel-put main-chan front-runner-names)]
              [else (loop new-results)])])))))
 
 ;; A subscriber used to print information for testing
@@ -577,4 +563,4 @@
 (make-region-manager (list "Region1" "Region2" "Region3") candidate-roll (list voter-roll-1 voter-roll-2 voter-roll-3) main-channel)
 
 (define msg (channel-get main-channel))
-(printf "We have our winner! ~a\n" msg)
+(printf "We have our winners! ~a\n" msg)
