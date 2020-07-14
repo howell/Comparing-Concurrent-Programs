@@ -312,7 +312,7 @@
           (log-caucus-evt "Vote leader in region ~a is issuing a vote!" region)
           (define eligible-cand-names (map (λ (cand) (candidate-name cand)) (set->list eligible-candidates)))
           (for ([voter valid-voters])
-            (channel-put (voter-voting-chan voter) (request-vote eligible-cand-names voting-chan))))
+            (thread (thunk (channel-put (voter-voting-chan voter) (request-vote eligible-cand-names voting-chan))))))
                 
 
         (log-caucus-evt "The Vote Leader is beginning a new round of voting!")
