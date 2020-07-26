@@ -117,6 +117,9 @@
 (define (filter-candidates candidates blacklist)
   (filter (λ (cand) (not (set-member? blacklist (candidate-name cand)))) candidates))
 
+(define (filter-voters voters blacklist)
+  (filter (λ (voter) (not (set-member? blacklist (voter-name voter)))) voters))
+
 (define (make-abstract-registry)
   (log-caucus-evt "Abstract registry is in business!")
   (define publisher-chan (make-channel))
@@ -290,56 +293,63 @@
       (log-caucus-evt "The Vote Leader is ready to run the caucus!")
 
       ;; Start a sequence of votes to determine an elected candidate
-      ;; (Setof Name) -> Candidate
-      (define (run-caucus removed-candidates voting-whitelist)
-        (define (receive-candidates removed-candidates)
+      ;; (Setof Name) (Setof Name) -> Candidate
+      (define (run-caucus candidate-blacklist voter-blacklist)
+        ;; Determine the next set of eligible candidates
+        ;; (Setof Name) -> (Setof Candidate)
+        (define (receive-candidates candidate-blacklist)
           (channel-put candidate-registry (message retrieve-candidates-chan))
           (define cand-payload (channel-get retrieve-candidates-chan))
           (match cand-payload
             [(payload new-candidates)
-            (list->set (filter-candidates (set->list new-candidates) removed-candidates))]))
+            (list->set (filter-candidates (set->list new-candidates) candidate-blacklist))]))
 
-        (define (receive-voters voter-whitelist)
+        ;; Determine the next set of eligible voters
+        ;; (Setof Name) -> (Setof Voter)
+        (define (receive-voters voter-blacklist)
           (channel-put voter-registry (message retrieve-voters-chan))
           (define voter-payload (channel-get retrieve-voters-chan))
           (match voter-payload
             [(payload new-voters)
-             (if (set-empty? voting-whitelist)
-               new-voters
-               (set-intersect new-voters voting-whitelist))]))
+             (list->set (filter-voters (set->list new-voters) voter-blacklist))]))
 
-        (define (issue-votes valid-voters eligible-candidates)
+        ;; Issue ballots to all eligible voters and return each voter's voting channel
+        ;; (Setof Voter) (Setof Candidate) -> (Hashof Name -> Chan)
+        (define (issue-votes eligible-voters eligible-candidates)
           (log-caucus-evt "Vote leader in region ~a is issuing a vote!" region)
           (define eligible-cand-names (map (λ (cand) (candidate-name cand)) (set->list eligible-candidates)))
-          (for ([voter valid-voters])
-            (thread (thunk (channel-put (voter-voting-chan voter) (request-vote eligible-cand-names voting-chan))))))
+          (for/hash ([voter eligible-voters])
+            (define recv-vote-chan (make-channel))
+            (thread (thunk (channel-put (voter-voting-chan voter) (request-vote eligible-cand-names recv-vote-chan))))
+            (values (voter-name voter) recv-vote-chan)))
                 
-
         (log-caucus-evt "The Vote Leader is beginning a new round of voting!")
-        (define eligible-candidates (receive-candidates removed-candidates))
-        (define valid-voters (receive-voters voting-whitelist))
-        (issue-votes valid-voters eligible-candidates)
-        (collect-votes valid-voters eligible-candidates removed-candidates))
+        (define eligible-candidates (receive-candidates candidate-blacklist))
+        (define eligible-voters (receive-voters voter-blacklist))
+        (define voting-chan-table (issue-votes eligible-voters eligible-candidates))
+        (collect-votes eligible-voters voter-blacklist voting-chan-table eligible-candidates candidate-blacklist))
 
 
       ;; Determine winner of a round of voting or eliminate a candidate and move to the next one
-      ;; (Setof Candidate) (Setof Voter) -> Candidate
-      (define (collect-votes voters candidates removed-candidates)
+      ;; (Setof Voter) (Setof Name) (Hashof Name -> Chan) (Setof Candidate) (Setof Name) -> Candidate
+      (define (collect-votes voters voter-blacklist voting-chan-table candidates candidate-blacklist)
         (define VOTE-DEADLINE (+ (current-inexact-milliseconds) 500))
 
         ;; NOTE move this to just above the match?
         (define vote-timeout (alarm-evt VOTE-DEADLINE))
 
-        (define (create-whitelist voters)
+        (define (create-voter-lookup voters)
           (for/hash ([voter voters]) (values (voter-name voter) voter)))
 
+        (define voter-lookup (create-voter-lookup voters))
 
-        (let voting-loop ([whitelist (create-whitelist voters)]
+
+        (let voting-loop ([voter-blacklist voter-blacklist]
                           [voting-record (hash)])
 
           ;; Determine winner if one candidate has received majority of votes, otherwise begin next round of voting
           ;; (Hashof Name -> Voter) (Hashof Name -> Name) (Hashof Name -> number) -> candidate msg to vote leader
-          (define (count-votes whitelist voting-record)
+          (define (count-votes voter-blacklist voting-record)
             (define votes (foldl (λ (vote acc) (hash-update acc (cdr vote) add1 0)) (hash) (hash->list voting-record)))
             (define front-runner (argmax (λ (cand) (hash-ref votes (candidate-name cand) 0)) (set->list candidates)))
             (define their-votes (hash-ref votes (candidate-name front-runner) 0))
@@ -347,55 +357,79 @@
               [(> their-votes (/ (hash-count voting-record) 2))
                (log-caucus-evt "Candidate ~a has been elected!" (candidate-name front-runner))
                front-runner]
-              [else (next-round whitelist voting-record votes)]))
+              [else (next-round voter-blacklist voting-record votes)]))
 
           ;; Remove the worst-performing candidate from the race and re-run caucus
           ;; (Hashof Name -> Voter) (Hashof Name -> Name) (Hashof Name -> number) -> candidate msg to vote leader
-          (define (next-round whitelist voting-record votes)
+          (define (next-round voter-blacklist voting-record votes)
             (define losing-cand (argmin (λ (cand) (hash-ref votes (candidate-name cand) 0)) (set->list candidates)))
             (for ([cand-struct candidates]) 
               (channel-put (candidate-results-chan cand-struct) (ballot-results votes)))
             (channel-put (candidate-results-chan losing-cand) (loser (candidate-name losing-cand)))
 
             (log-caucus-evt "Candidate ~a has been eliminated from the race!" (candidate-name losing-cand))
-            (run-caucus (set-add removed-candidates (candidate-name losing-cand)) (list->set (hash-values whitelist))))
+            (run-caucus (set-add candidate-blacklist (candidate-name losing-cand)) voter-blacklist))
 
           ;; Determine if all votes for the round have concluded
           ;; (Hashof Name -> Voter) (Hashof Name -> Name) (Hashof Name -> number) -> candidate msg to vote leader
-          (define (conclude-vote? whitelist voting-record)
-            (if (= (hash-count voting-record) (hash-count whitelist))
-              (count-votes whitelist voting-record)
-              (voting-loop whitelist voting-record)))
+          (define (conclude-vote? voter-blacklist voting-record)
+            (if (= (hash-count voting-record) (set-count (filter-voters (set->list voters) voter-blacklist)))
+              (count-votes voter-blacklist voting-record)
+              (voting-loop voter-blacklist voting-record)))
 
-          (define (try-cast-vote name candidate whitelist voting-record)
+          (define (try-cast-vote name candidate voter-blacklist voting-record)
             (cond
-              [(not (hash-has-key? whitelist name))
+              [(set-member? voter-blacklist name)
                (log-caucus-evt "Invalid voter ~a has tried to vote!" name)
-               (values whitelist voting-record)]
+               (values voter-blacklist voting-record)]
               [(hash-has-key? voting-record name)
                (log-caucus-evt "Voter ~a has already voted! ~a is no longer a valid voter!" name name)
-               (values (hash-remove whitelist name) (hash-remove voting-record name))]
+               (values (set-add voter-blacklist name) (hash-remove voting-record name))]
               [(andmap (λ (cand) (not (string=? candidate (candidate-name cand)))) (set->list candidates))
                (log-caucus-evt "Voter ~a voted for candidate ~a, who isn't currently an eligible candidate!" name candidate)
-               (values (hash-remove whitelist name) voting-record)]
-              [else (values whitelist (hash-set voting-record name candidate))]))
+               (values (set-add voter-blacklist name) voting-record)]
+              [else (values voter-blacklist (hash-set voting-record name candidate))]))
 
+          (define handle-vote
+            (match-lambda
+              [(vote name candidate)
+               (try-cast-vote name candidate voter-blacklist voting-record)]))
 
-          (sync
-            (handle-evt
-              voting-chan
-              (match-lambda
-                [(vote name candidate)
-                 (define-values (new-whitelist new-voting-record) (try-cast-vote name candidate whitelist voting-record))
-                 (conclude-vote? new-whitelist new-voting-record)]))
+          (define vote-events
+            (apply
+              choice-evt 
+              (map 
+                (λ (recv-vote-chan) 
+                   (handle-evt recv-vote-chan 
+                               (λ (vote)
+                                  (define-values (new-voter-blacklist new-voting-record) (handle-vote vote))
+                                  (conclude-vote? new-voter-blacklist new-voting-record))))
+                (hash-values voting-chan-table))))
 
+          (sync 
+            vote-events
             (handle-evt
               vote-timeout
-              (λ (_) 
+              (λ (_)
                  (log-caucus-evt "Round of voting in region ~a is over!" region)
-                 (conclude-vote?
-                   (make-immutable-hash (filter (λ (wl-pair) (hash-has-key? voting-record (car wl-pair))) (hash->list whitelist)))
-                   voting-record))))))
+                 (let end-of-voting-loop ([voter-blacklist voter-blacklist]
+                                          [voting-record voting-record]
+                                          [voter-chans (hash->list voting-chan-table)])
+                   (cond
+                     [(empty? voter-chans) (count-votes voter-blacklist voting-record)]
+                     [else
+                       (match-define `(,voter-name . ,voting-chan) (car voter-chans))
+                       (cond
+                         [(hash-has-key? voting-record voter-name)
+                          (end-of-voting-loop voter-blacklist voting-record (cdr voter-chans))]
+                         [else
+                           (define vote-attempt (channel-try-get voting-chan))
+                           (cond
+                             [vote-attempt
+                               (define-values (new-voter-blacklist new-voting-record) (handle-vote vote-attempt))
+                               (end-of-voting-loop new-voter-blacklist new-voting-record (cdr voter-chans))]
+                             [else
+                               (end-of-voting-loop (set-add voter-blacklist voter-name) (hash-remove voting-record voter-name) (cdr voter-chans))])])])))))))
         
       (define winner (run-caucus (set) (set)))
       (log-caucus-evt "We have a winner ~a in region ~a!" (candidate-name winner) region)
