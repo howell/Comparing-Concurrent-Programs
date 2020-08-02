@@ -412,24 +412,20 @@
               vote-timeout
               (λ (_)
                  (log-caucus-evt "Round of voting in region ~a is over!" region)
-                 (let end-of-voting-loop ([voter-blacklist voter-blacklist]
-                                          [voting-record voting-record]
-                                          [voter-chans (hash->list voting-chan-table)])
-                   (cond
-                     [(empty? voter-chans) (count-votes voter-blacklist voting-record)]
-                     [else
-                       (match-define `(,voter-name . ,voting-chan) (car voter-chans))
-                       (cond
-                         [(hash-has-key? voting-record voter-name)
-                          (end-of-voting-loop voter-blacklist voting-record (cdr voter-chans))]
-                         [else
-                           (define vote-attempt (channel-try-get voting-chan))
-                           (cond
-                             [vote-attempt
-                               (define-values (new-voter-blacklist new-voting-record) (handle-vote vote-attempt))
-                               (end-of-voting-loop new-voter-blacklist new-voting-record (cdr voter-chans))]
-                             [else
-                               (end-of-voting-loop (set-add voter-blacklist voter-name) (hash-remove voting-record voter-name) (cdr voter-chans))])])])))))))
+                 (define-values (new-blacklist new-voting-record)
+                   (for/fold ([voter-blacklist voter-blacklist]
+                              [voting-record voting-record])
+                             ([(voter-name voting-chan) (in-hash voting-chan-table)])
+                    (cond
+                      [(hash-has-key? voting-record voter-name)
+                        (values voter-blacklist voting-record)]
+                      [else
+                        (define vote-attempt (channel-try-get voting-chan))
+                        (cond
+                          [vote-attempt (handle-vote vote-attempt)]
+                          [else
+                            (values (set-add voter-blacklist voter-name) (hash-remove voting-record voter-name))])])))
+                 (count-votes new-blacklist new-voting-record))))))
         
       (define winner (run-caucus (set) (set)))
       (log-caucus-evt "We have a winner ~a in region ~a!" (candidate-name winner) region)
