@@ -139,7 +139,6 @@
   (spawn
     (printf "Stubborn voter ~a in region ~a has registered!\n" name region)
     (assert (voter name region))
-    (define/query-set candidates (candidate $name $tr $thresh) (candidate name tr thresh))
     (during (round $id region $round-candidates)
             (assert (vote name id region invalid-candidate)))))
 
@@ -178,7 +177,7 @@
     (during (round $id region $round-candidates)
             (ranked-vote candidates round-candidates rank-candidates name id region))))
 
-;; -> Leader
+;; Region -> Leader
 (define (spawn-leader region)
   (spawn
     (printf "The Vote Leader for region ~a has joined the event!\n" region)
@@ -203,7 +202,11 @@
 
         (printf "Candidates still in the running in ~a for region ~a: ~a\n" round-id region still-in-the-running)
         (assert (round round-id region still-in-the-running))
-        (on (asserted (leave $voter)) (when (set-member? (valid-voters) voter) (invalidate-voter voter)))
+
+        (on (asserted (leave $voter)) 
+            (when (set-member? (valid-voters) voter) 
+              (invalidate-voter voter)))
+
         (on (asserted (vote $who round-id region $for))
             (when (set-member? (valid-voters) who)
               (cond
@@ -232,7 +235,10 @@
                (react
                  (assert (elected front-runner region))))]
             [else
-              (for ([candidate (hash-keys (candidates))]) (react (assert (tally candidate region (hash-ref (votes) candidate 0)))))
+              (for ([candidate (hash-keys (candidates))]) 
+                (react 
+                  (assert (tally candidate region (hash-ref (votes) candidate 0)))))
+
               (define loser (argmin (lambda (n) (hash-ref (votes) n 0))
                                    still-in-the-running))
               (printf "The front-runner for ~a in region ~a is ~a! The loser is ~a!\n" round-id region front-runner loser)
@@ -271,7 +277,9 @@
         (valid-regions (add1 (valid-regions))))
     (on (asserted (elected $name $region))
         (caucus-results (hash-update (caucus-results) name add1 0))
-        (define size-of-hash (foldl (λ (num acc) (+ acc num)) 0 (hash-values (caucus-results))))
+        ;; FIXME name
+        (define size-of-hash 
+          (foldl (λ (num acc) (+ acc num)) 0 (hash-values (caucus-results))))
         (when (= size-of-hash (valid-regions))
           (define winning-candidate 
             (car (foldl (λ (new-pair old-pair) 
