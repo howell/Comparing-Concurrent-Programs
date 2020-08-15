@@ -29,7 +29,7 @@
 (assertion-struct round (id region candidates))
 
 ;; a Candidate is a (candidate Name TaxRate Threshold)
-(assertion-struct candidate (name tax-rate threshold))
+(assertion-struct candidate (name tax-rate))
 
 ;; a Tally is a (tally Name Region VoteCount)
 (assertion-struct tally (name region vote-count))
@@ -89,79 +89,91 @@
 (define (spawn-candidate name tax-rate threshold)
   (spawn
     (printf "Candidate ~a has entered the race!\n" name)
-    (assert (candidate name tax-rate threshold))))
+    (assert (candidate name tax-rate))
+    (on (asserted (tally name $region $vote-count))
+        (when (< vote-count threshold)
+          (stop-current-facet)))))
 
 ;; Name TaxRate Threshold -> Candidate
 (define (spawn-stubborn-candidate name tax-rate threshold)
   (spawn
     (printf "Stubborn candidate ~a has entered the race!\n" name)
-    (assert (candidate name tax-rate threshold))
+    (assert (candidate name tax-rate))
     (on (asserted (tally name $region $vote-count))
         (when (< vote-count threshold)
           (printf "Candidate ~a is trying to re-enter the race!\n" name)
-          (stop-current-facet (spawn-stubborn-candidate name tax-rate (/ threshold 2)))))))
+          (stop-current-facet (spawn-stubborn-candidate name tax-rate threshold))))))
 
 ;; Assert a vote for a candidate based on a voter's preference for a list of candidates
 ;; [Listof Candidate] [Listof Name] [[Listof Candidate] -> [Listof Candidate]] Name ID Region -> Vote
 (define (ranked-vote candidates round-candidates rank-candidates name id region)
   (define priorities (rank-candidates (set->list (candidates))))
-  (define voting-for
-    (for/first ([candidate (in-list priorities)]
-                #:when (member (candidate-name candidate) round-candidates))
-               (candidate-name candidate)))
+  (for/first ([candidate (in-list priorities)]
+              #:when (member (candidate-name candidate) round-candidates))
+              (candidate-name candidate)))
   ;; if no match found, voting-for is #f. Assume that doesn't happen.
   (assert (vote name id region voting-for)))
 
-;; Name Region [[Listof Candidate] -> [Listof Candidate]] -> Voter
+(define (voter-skeleton voting-procedure name region)
+  (spawn
+    ;; a print
+    (define/query-set candidates (candidate $name $tr) (candidate name tr))
+    (assert (voter name region))
+    (during (round $id region $round-candidates)
+            (voting-procedure id region round-candidates candidates))))
+
 (define (spawn-voter name region rank-candidates)
-  (spawn
-    (printf "Voter ~a in region ~a has registered!\n" name region)
-    (assert (voter name region))
-    (define/query-set candidates (candidate $name $tr $thresh) (candidate name tr thresh))
-    (during (round $id region $round-candidates)
-            (ranked-vote candidates round-candidates rank-candidates name id region))))
+  (define voting-procedure
+    (λ (id region round-candidates candidates)
+       (ranked-vote candidates round-candidates rank-candidates name id region)))
 
-;; Name Candidate Candidate -> Voter
+  (voter-skeleton voting-procedure name region))
+
 (define (spawn-greedy-voter name region first-candidate second-candidate)
-  (spawn
-    (printf "Greedy voter ~a in region ~a has registered!\n" name region)
-    (assert (voter name region))
-    (define/query-set candidates (candidate $name $tr $thresh) (candidate name tr thresh))
-    (during (round $id region $round-candidates)
-            (if (member first-candidate round-candidates)
-              (assert (vote name id region first-candidate))
-              (assert (vote name id region (first round-candidates))))
-            (when (member second-candidate round-candidates) 
-              (assert (vote name id region second-candidate))))))
+  (define voting-procedure
+    (λ (id region round-candidates candidates)
+       (if (member first-candidate round-candidates)
+         (assert (vote name id region first-candidate))
+         (assert (vote name id region (first round-candidates))))
+       (when (member second-candidate round-candidates)
+         (assert (vote name id region second-candidates)))))
 
-;; Name Candidate -> Voter
+  (voter-skeleton voting-procedure name region))
+
 (define (spawn-stubborn-voter name region invalid-candidate)
-  (spawn
-    (printf "Stubborn voter ~a in region ~a has registered!\n" name region)
-    (assert (voter name region))
-    (during (round $id region $round-candidates)
-            (assert (vote name id region invalid-candidate)))))
+  (define voting-procedure
+    (λ (id region round-candidates candidates)
+       (assert (vote name id region invalid-candidate))))
 
-;; Name [[Listof Candidate] -> [Listof Candidate]] Number -> Voter
+  (voter-skeleton voting-procedure name region))
+
 (define (spawn-leaving-voter name region rank-candidates round-limit)
-  (spawn
-    (printf "Early-exiting voter ~a in region ~a has registered!\n" name region)
-    (field [round-count 0])
-    (define/query-set candidates (candidate $name $tr $thresh) (candidate name tr thresh))
-    (assert (voter name region))
-    (during (round $id region $round-candidates)
-      (when (> (round-count) round-limit) 
-        (printf "Early-exiting voter ~a is leaving!\n" name)
-        (stop-current-facet (react (assert (leave name)))))
-      (round-count (add1 (round-count)))
-      (ranked-vote candidates round-candidates rank-candidates name id region))))
+  (define round-count 0)
+  (define voting-procedure
+    (λ (id region round-candidates candidates)
+       (when (> round-count round-limit)
+         (stop-current-facet))
+       (set! round-count (add1 round-count))
+       (ranked-vote candidates round-candidates rank-candidates name id region)))
+
+  (voter-skeleton voting-procedure name region))
+
+;; TODO unfinished
+(define (spawn-late-joining-voter name region rank-candidates round-limit)
+  (define round-count 0)
+  (define voting-procedure
+    (λ (id region round-candidates candidates)
+       (when (>= round-count round-limit)
+         (ranked-vote candidates round-candidates rank-candidates name id region))))
+
+  (voter-skeleton voting-procedure name region))
 
 ;; Name [[Listof Candidate] -> [Listof Candidate]] Number -> Voter
 (define (spawn-late-joining-voter name region rank-candidates round-limit)
   (spawn
     (field [round-count 0])
     (field [is-voting #f])
-    (define/query-set candidates (candidate $name $tr $thresh) (candidate name tr thresh))
+    (define/query-set candidates (candidate $name $tr) (candidate name tr))
     (during (round $id region $round-candidates)
       (when (>= (round-count) round-limit)
         (printf "Late-joining voter ~a in region ~a has registered at ~a\n" name region id)
@@ -173,7 +185,7 @@
 ;; Name [[Listof Candidate] -> [Listof Candidate]] -> Voter
 (define (spawn-not-registered-voter name region rank-candidates)
   (spawn
-    (define/query-set candidates (candidate $name $tr $thresh) (candidate name tr thresh))
+    (define/query-set candidates (candidate $name $tr) (candidate name tr))
     (during (round $id region $round-candidates)
             (ranked-vote candidates round-candidates rank-candidates name id region))))
 
@@ -183,7 +195,7 @@
     (printf "The Vote Leader for region ~a has joined the event!\n" region)
     (assert (valid-region region))
     (define/query-set voters (voter $name region) name)
-    (define/query-hash candidates (candidate $name _ $threshold) name threshold)
+    (define/query-set candidates (candidate $name _) name)
 
     ;; [Listof Name] -> Elected
     (define (run-round still-in-the-running current-voters)
@@ -235,7 +247,7 @@
                (react
                  (assert (elected front-runner region))))]
             [else
-              (for ([candidate (hash-keys (candidates))]) 
+              (for ([candidate (in-set (candidates))])
                 (react 
                   (assert (tally candidate region (hash-ref (votes) candidate 0)))))
 
@@ -243,13 +255,7 @@
                                    still-in-the-running))
               (printf "The front-runner for ~a in region ~a is ~a! The loser is ~a!\n" round-id region front-runner loser)
               (define next-candidates (remove loser still-in-the-running))
-              (define (keep-candidate? cand-name)
-                (>= (hash-ref (votes) cand-name) (hash-ref (candidates) cand-name)))
-              (define filtered-candidates 
-                (filter (λ (cand-name) (keep-candidate? cand-name)) next-candidates))
-              (for ([dropped-candidate (filter-not (λ (cand-name) (keep-candidate? cand-name)) next-candidates)])
-                (printf "Candidate ~a has dropped out of the race at ~a in region ~a!\n" dropped-candidate round-id region))
-              (stop-current-facet (run-round filtered-candidates (valid-voters)))])))))
+              (stop-current-facet (run-round next-candidates (valid-voters)))])))))
 
 
     (define one-second-from-now (+ 1000 (current-inexact-milliseconds)))
@@ -258,7 +264,7 @@
         (on (asserted (later-than one-second-from-now))
             ;; ASSUME: at least one candidate and voter at this point
             (printf "The race has begun in region ~a!\n" region)
-            (stop-current-facet (run-round (hash-keys (candidates)) (voters))))))))
+            (stop-current-facet (run-round (set->list (candidates)) (voters))))))))
 
 ;; Name -> [[Listof Candidate] -> [Listof Candidate]]
 (define (stupid-sort cand-name)
