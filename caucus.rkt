@@ -276,12 +276,12 @@
         ;; FIXME name
         (define num-results
           (foldl (λ (num acc) (+ acc num)) 0 (hash-values (caucus-results))))
-        (when (= num_results (length regions))
+        (when (= num-results (length regions))
           (define winning-candidate 
-            (for/fold ([(best-name best-votes) (cons "" -1)])
+            (for/fold ([cand-info (cons "" -1)])
                       ([(cand-name cand-votes) (in-hash (caucus-results))])
-              (if (< cand-votes best-votes)
-                (cons best-name best-votes)
+              (if (< cand-votes (cdr cand-info))
+                cand-info
                 (cons cand-name cand-votes))))
           (stop-current-facet 
             (react 
@@ -297,10 +297,9 @@
 ;; Candidates do actually drop per caucus. Nice.
 
 ;; Region Manager
-(spawn-manager)
+(spawn-manager '("region1" "region2" "region3" "region4" "region5"))
 
 ;; First Caucus: Region 1
-(spawn-leader "region1")
 (spawn-voter "Rax" "region1" (stupid-sort "Tulsi"))
 (spawn-voter "Bax" "region1" (stupid-sort "Tulsi"))
 (spawn-voter "Tax" "region1" (stupid-sort "Tulsi"))
@@ -352,7 +351,6 @@
 (spawn-not-registered-voter "XY9" "region1" (stupid-sort "Tulsi"))
 
 ;; Second Caucus: Region 2
-(spawn-leader "region2")
 (spawn-voter "AAA" "region2" (stupid-sort "Bernie"))
 (spawn-voter "AAB" "region2" (stupid-sort "Bernie"))
 (spawn-voter "AAC" "region2" (stupid-sort "Bernie"))
@@ -366,7 +364,6 @@
 (spawn-voter "AAK" "region2" (stupid-sort "Biden"))
 
 ;; Third Caucus: Region 3
-(spawn-leader "region3")
 (spawn-voter "AAL" "region3" (stupid-sort "Bernie"))
 (spawn-voter "AAM" "region3" (stupid-sort "Bernie"))
 (spawn-voter "AAN" "region3" (stupid-sort "Bernie"))
@@ -380,7 +377,6 @@
 (spawn-voter "AAV" "region3" (stupid-sort "Biden"))
 
 ;; Fourth Caucus: Region 4
-(spawn-leader "region4")
 (spawn-voter "AAL" "region4" (stupid-sort "Biden"))
 (spawn-voter "AAM" "region4" (stupid-sort "Biden"))
 (spawn-voter "AAN" "region4" (stupid-sort "Biden"))
@@ -394,7 +390,6 @@
 (spawn-voter "AAV" "region4" (stupid-sort "Biden"))
 
 ;; Fifth Caucus: Region 5
-(spawn-leader "region5")
 (spawn-voter "AAW" "region5" (stupid-sort "Biden"))
 (spawn-voter "AAX" "region5" (stupid-sort "Biden"))
 (spawn-voter "AAY" "region5" (stupid-sort "Biden"))
