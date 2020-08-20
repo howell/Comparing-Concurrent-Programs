@@ -77,14 +77,6 @@
 ;; - Late-Joining Voter: A voter who joins voting late (i.e. isn't available to vote for the first round).
 ;; - Unregistered Voter: A voter who votes without being registered to vote.
 
-;; TODO
-;; 3. Resolve any other assumptions being made
-
-;; functionality I need to change:
-;; voters register for locations explicitly
-;; vote leaders are attached to a particular caucus
-;; a region manager who tallies the final conditions and whatnot
-
 ;; Name TaxRate Threshold -> Candidate
 (define (spawn-candidate name tax-rate threshold)
   (spawn
@@ -106,26 +98,25 @@
 
 ;; Assert a vote for a candidate based on a voter's preference for a list of candidates
 ;; [Listof Candidate] [Listof Name] [[Listof Candidate] -> [Listof Candidate]] Name ID Region -> Vote
-(define (ranked-vote candidates round-candidates rank-candidates name id region)
+(define (ranked-vote candidates round-candidates rank-candidates)
   (define priorities (rank-candidates (set->list (candidates))))
+  ;; if no match found, voting-for is #f. Assume that doesn't happen.
   (for/first ([candidate (in-list priorities)]
               #:when (member (candidate-name candidate) round-candidates))
               (candidate-name candidate)))
-  ;; if no match found, voting-for is #f. Assume that doesn't happen.
-  (assert (vote name id region voting-for)))
 
 (define (voter-skeleton voting-procedure name region)
   (spawn
     ;; a print
     (define/query-set candidates (candidate $name $tr) (candidate name tr))
-    (assert (voter name region))
+    (assert (voter name region)) ;; NOTE should there be an initialization function?
     (during (round $id region $round-candidates)
             (voting-procedure id region round-candidates candidates))))
 
 (define (spawn-voter name region rank-candidates)
   (define voting-procedure
     (λ (id region round-candidates candidates)
-       (ranked-vote candidates round-candidates rank-candidates name id region)))
+       (assert (vote name id region (ranked-vote candidates round-candidates rank-candidates)))))
 
   (voter-skeleton voting-procedure name region))
 
@@ -136,7 +127,7 @@
          (assert (vote name id region first-candidate))
          (assert (vote name id region (first round-candidates))))
        (when (member second-candidate round-candidates)
-         (assert (vote name id region second-candidates)))))
+         (assert (vote name id region second-candidate)))))
 
   (voter-skeleton voting-procedure name region))
 
@@ -152,42 +143,42 @@
   (define voting-procedure
     (λ (id region round-candidates candidates)
        (when (> round-count round-limit)
+         ;; NOTE here
          (stop-current-facet))
        (set! round-count (add1 round-count))
-       (ranked-vote candidates round-candidates rank-candidates name id region)))
+       (assert (vote name id region (ranked-vote candidates round-candidates rank-candidates)))))
 
   (voter-skeleton voting-procedure name region))
 
 ;; TODO unfinished
-(define (spawn-late-joining-voter name region rank-candidates round-limit)
-  (define round-count 0)
-  (define voting-procedure
-    (λ (id region round-candidates candidates)
-       (when (>= round-count round-limit)
-         (ranked-vote candidates round-candidates rank-candidates name id region))))
-
-  (voter-skeleton voting-procedure name region))
+;; (define (spawn-late-joining-voter name region rank-candidates round-limit)
+;;   (define round-count 0)
+;;   (define voting-procedure
+;;     (λ (id region round-candidates candidates)
+;;        (when (>= round-count round-limit)
+;;          (assert (vote name id region (ranked-vote candidates round-candidates rank-candidates))))))
+;; 
+;;   (voter-skeleton voting-procedure name region))
 
 ;; Name [[Listof Candidate] -> [Listof Candidate]] Number -> Voter
+;; NOTE is it worth abstracting this voter and the next one despite the fact that they have different assertion behavior?
+;;      could abstract it by having an initialization function
 (define (spawn-late-joining-voter name region rank-candidates round-limit)
   (spawn
     (field [round-count 0])
     (field [is-voting #f])
     (define/query-set candidates (candidate $name $tr) (candidate name tr))
     (during (round $id region $round-candidates)
-      (when (>= (round-count) round-limit)
-        (printf "Late-joining voter ~a in region ~a has registered at ~a\n" name region id)
-        (assert (voter name region))
-        (is-voting #t))
-      (when (is-voting)
-        (ranked-vote candidates round-candidates rank-candidates name id region)))))
+      (define has-joined (>= (round-count) round-limit))
+      (assert #:when has-joined (voter name region))
+      (assert #:when has-joined (vote name id region ranked-vote candidates round-candidates rank-candidates)))))
 
 ;; Name [[Listof Candidate] -> [Listof Candidate]] -> Voter
 (define (spawn-not-registered-voter name region rank-candidates)
   (spawn
     (define/query-set candidates (candidate $name $tr) (candidate name tr))
     (during (round $id region $round-candidates)
-            (ranked-vote candidates round-candidates rank-candidates name id region))))
+            (assert (vote name id region (ranked-vote candidates round-candidates rank-candidates))))))
 
 ;; Region -> Leader
 (define (spawn-leader region)
@@ -275,25 +266,23 @@
        (candidates))))
 
 ;; -> Manager
-(define (spawn-manager)
+(define (spawn-manager regions)
   (spawn
-    (field [valid-regions 0]
-           [caucus-results (hash)])
-    (on (asserted (valid-region $_))
-        (valid-regions (add1 (valid-regions))))
+    (field [caucus-results (hash)])
+    (on-start (for ([region regions]) (spawn-leader region)))
+
     (on (asserted (elected $name $region))
         (caucus-results (hash-update (caucus-results) name add1 0))
         ;; FIXME name
-        (define size-of-hash 
+        (define num-results
           (foldl (λ (num acc) (+ acc num)) 0 (hash-values (caucus-results))))
-        (when (= size-of-hash (valid-regions))
+        (when (= num_results (length regions))
           (define winning-candidate 
-            (car (foldl (λ (new-pair old-pair) 
-                           (if (> (cdr new-pair) (cdr old-pair)) 
-                             new-pair 
-                             old-pair)) 
-                        (cons "" -1) 
-                        (hash->list (caucus-results)))))
+            (for/fold ([(best-name best-votes) (cons "" -1)])
+                      ([(cand-name cand-votes) (in-hash (caucus-results))])
+              (if (< cand-votes best-votes)
+                (cons best-name best-votes)
+                (cons cand-name cand-votes))))
           (stop-current-facet 
             (react 
               (printf "The winner of the election is ~a!\n" winning-candidate)
