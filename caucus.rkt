@@ -28,6 +28,9 @@
 ;; a Round is a (round ID Region (Listof Name))
 (assertion-struct round (id region candidates))
 
+;; a Re-Vote is a (re-vote ID Region Name (Listof Name))
+(assertion-struct re-vote (id region name candidates))
+
 ;; a Candidate is a (candidate Name TaxRate Threshold)
 (assertion-struct candidate (name tax-rate))
 
@@ -115,7 +118,11 @@
     ;; a print
     (define/query-set candidates (candidate $name $tr) (candidate name tr))
     (when register? (assert (voter name region)))
+
     (during (round $id region $round-candidates)
+            (voting-procedure id region round-candidates candidates))
+
+    (during (re-vote $id region name $round-candidates)
             (voting-procedure id region round-candidates candidates))))
 
 (define (spawn-voter name region rank-candidates)
@@ -214,11 +221,14 @@
               (still-in-the-running (set-remove (still-in-the-running) name))))
 
         (on (asserted (vote $who round-id region $for))
+            ;; should the voter not be eliminated if they're not valid?
             (when (set-member? (valid-voters) who)
               (cond
                 [(or (hash-has-key? (voter-to-candidate) who) 
-                     (not (member for (still-in-the-running)))) 
+                     (not (member for current-cands))) 
                  (invalidate-voter who)]
+                [(not (member for (still-in-the-running)))
+                 (react (assert (re-vote round-id region who (still-in-the-running))))]
                 [else 
                   (printf "Voter ~a has voted for candidate ~a in ~a in region ~a!\n" who for round-id region)
                   (voter-to-candidate (hash-set (voter-to-candidate) who for))
@@ -368,13 +378,6 @@
 (spawn-voter "AAJ" "region2" (stupid-sort "Biden"))
 (spawn-voter "AAK" "region2" (stupid-sort "Biden"))
 
-(spawn-voter "AA11" "region2" (stupid-sort "1"))
-(spawn-voter "AA21" "region2" (stupid-sort "2"))
-(spawn-voter "AA31" "region2" (stupid-sort "3"))
-(spawn-voter "AA41" "region2" (stupid-sort "4"))
-(spawn-voter "AA51" "region2" (stupid-sort "5"))
-(spawn-voter "AA61" "region2" (stupid-sort "6"))
-
 ;; Third Caucus: Region 3
 (spawn-voter "AAL" "region3" (stupid-sort "Bernie"))
 (spawn-voter "AAM" "region3" (stupid-sort "Bernie"))
@@ -419,12 +422,6 @@
 (spawn-candidate "Biden" 25 1)
 (spawn-candidate "Tulsi" 16 300)
 (spawn-stubborn-candidate "Donkey" 0 1000)
-(spawn-candidate "1" 0 0)
-(spawn-candidate "2" 0 0)
-(spawn-candidate "3" 0 0)
-(spawn-candidate "4" 0 0)
-(spawn-candidate "5" 0 0)
-(spawn-candidate "6" 0 0)
 
 (module+ main
 
