@@ -77,10 +77,6 @@
 ;; - Late-Joining Voter: A voter who joins voting late (i.e. isn't available to vote for the first round).
 ;; - Unregistered Voter: A voter who votes without being registered to vote.
 
-;; TODO
-;; 3. Make sure everybody's ready for diffing
-;; 4. Do the diffing
-
 ;; Name TaxRate Threshold -> Candidate
 (define (spawn-candidate name tax-rate threshold)
   (spawn
