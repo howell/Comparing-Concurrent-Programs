@@ -107,7 +107,7 @@
 
 (define (voter-skeleton voting-procedure name region register?)
   (spawn
-    ;; a print
+    (printf "Voter ~a is intending to register in region ~a!\n" name region)
     (define/query-set candidates (candidate $name $tr) (candidate name tr))
     (when register? (assert (voter name region)))
 
@@ -168,7 +168,7 @@
   (voter-skeleton voting-procedure name region #f))
 
 (define (spawn-sleepy-voter name region)
-  (define voting-procedure (λ (_a _b _c _d) #f))
+  (define (voting-procedure _a _b _c _d) #f)
 
   (voter-skeleton voting-procedure name region #t))
 
