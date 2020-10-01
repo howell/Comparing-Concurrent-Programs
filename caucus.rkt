@@ -22,9 +22,6 @@
 ;; a Voter is a (voter Name Region)
 (assertion-struct voter (name region))
 
-;; a Leave is a (leave Name)
-(assertion-struct leave (name))
-
 ;; a Vote is a (voter Name ID Region Name), where the first name is the voter and the
 ;; second is who they are voting for
 (assertion-struct vote (voter round region candidate))
@@ -40,9 +37,6 @@
 
 ;; an Elected is a (elected Name Region)
 (assertion-struct elected (name region))
-
-;; a ValidRegion is a (valid-region Region)
-(assertion-struct valid-region (region))
 
 ;; a Winner is a (winner Name)
 (assertion-struct winner (name))
@@ -77,9 +71,11 @@
 ;; - Stubborn Candidate: a candidate who tries to re-enter the race after having been dropped --> could be implemented differently than the way I have it now
 ;; - Greedy Voter: A voter that tries voting twice when possible.
 ;; - Stubborn Voter: A voter that always votes for the same candidate, even if that candidate isn't eligible.
-;; - Leaving Voter: A voter who leaves the caucus before it has formally elected a winner.
 ;; - Late-Joining Voter: A voter who joins voting late (i.e. isn't available to vote for the first round).
 ;; - Unregistered Voter: A voter who votes without being registered to vote.
+
+(define (get-one-second-from-now)
+  (+ (current-inexact-milliseconds) 1000))
 
 ;; Name TaxRate Threshold -> Candidate
 (define (spawn-candidate name tax-rate threshold)
@@ -180,7 +176,6 @@
 (define (spawn-leader region)
   (spawn
     (printf "The Vote Leader for region ~a has joined the event!\n" region)
-    (assert (valid-region region))
     (define/query-set voters (voter $name region) name)
     (define/query-set candidates (candidate $name _) name)
 
@@ -226,8 +221,9 @@
 
         (on-start
           (react
-            (field [one-second-from-now (+ 1000 (current-inexact-milliseconds))])
-            (on (asserted (later-than (one-second-from-now)))
+            (define one-sec-from-now (get-one-second-from-now))
+
+            (on (asserted (later-than one-sec-from-now))
                 (printf "Timeout reached on this round!\n")
                 (valid-voters
                   (list->set (filter (λ (voter) (hash-has-key? (voter-to-candidate) voter)) (set->list (valid-voters))))))))
