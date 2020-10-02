@@ -136,25 +136,25 @@
             publisher-chan
             (match-lambda
               [(publish val)
-              (log-caucus-evt "New value ~a has been published!" val)
-              (define new-data (set-add data val))
-              (for ([subscriber subscribers]) (channel-put subscriber (payload new-data)))
-              (loop new-data subscribers)]
+               (log-caucus-evt "New value ~a has been published!" val)
+               (define new-data (set-add data val))
+               (for ([subscriber subscribers]) (channel-put subscriber (payload new-data)))
+               (loop new-data subscribers)]
               [(withdraw val)
-              (log-caucus-evt "Value ~a is being removed from the registry!" val)
-              (define new-data (set-remove data val))
-              (loop new-data subscribers)]))
+               (log-caucus-evt "Value ~a is being removed from the registry!" val)
+               (define new-data (set-remove data val))
+               (loop new-data subscribers)]))
           (handle-evt
             subscriber-chan
             (match-lambda
               [(subscribe subscriber-chan)
-              (log-caucus-evt "New subscriber ~a is following the registry!" subscriber-chan)
-              (channel-put subscriber-chan (payload data))
-              (loop data (set-add subscribers subscriber-chan))]
+               (log-caucus-evt "New subscriber ~a is following the registry!" subscriber-chan)
+               (channel-put subscriber-chan (payload data))
+               (loop data (set-add subscribers subscriber-chan))]
               [(message response-chan)
-              (log-caucus-evt "Channel ~a has requested a message from the registry!" response-chan)
-              (channel-put response-chan (payload data))
-              (loop data subscribers)]))))))
+               (log-caucus-evt "Channel ~a has requested a message from the registry!" response-chan)
+               (channel-put response-chan (payload data))
+               (loop data subscribers)]))))))
       (values publisher-chan subscriber-chan))
 
 ;; Create a Candidate thread
@@ -205,52 +205,50 @@
 
 ;; Make a Voter thread
 (define (make-voter name region rank-candidates voter-registry candidate-registry)
-  (define normal-voting
-    (λ (existing-candidates available-candidates leader-chan)
-       (define priorities (rank-candidates (set->list existing-candidates)))
-       (define voting-for
-         (for/first ([candidate (in-list priorities)]
-                     #:when (member (candidate-name candidate) available-candidates))
-                    (candidate-name candidate)))
-       (log-caucus-evt "Voter ~a has submitted a vote for candidate ~a!" name voting-for)
-       (announce-vote leader-chan (vote name voting-for))))
+  (define (normal-voting existing-candidates available-candidates leader-chan)
+    (define priorities (rank-candidates (set->list existing-candidates)))
+    (define voting-for
+      (for/first ([candidate (in-list priorities)]
+                  #:when (member (candidate-name candidate) available-candidates))
+                 (candidate-name candidate)))
+    (log-caucus-evt "Voter ~a has submitted a vote for candidate ~a!" name voting-for)
+    (announce-vote leader-chan (vote name voting-for)))
 
   (voter-skeleton name region normal-voting voter-registry candidate-registry))
 
 ;; Make a voter thread that produces a greedy voter (who votes multiple times)
 (define (make-greedy-voter name region rank-candidates voter-registry candidate-registry)
-  (define greedy-voting 
-    (λ (existing-candidates available-candidates leader-chan)
-       (define priorities (rank-candidates (set->list existing-candidates)))
-       (define voting-for
-         (for/first ([candidate (in-list priorities)]
-                     #:when (member (candidate-name candidate) available-candidates))
-                    (candidate-name candidate)))
-       (define second-vote
-         (for/first ([candidate (in-list priorities)]
-                     #:when (and (member (candidate-name candidate) available-candidates) (not (string=? (candidate-name candidate) voting-for))))
-                     (candidate-name candidate)))
-       (log-caucus-evt "Greedy voter ~a is submitting two votes!" name)
-       (announce-vote leader-chan (vote name voting-for))
-       (announce-vote leader-chan (vote name (if second-vote second-vote voting-for)))))
+  (define (greedy-voting existing-candidates available-candidates leader-chan)
+    (define priorities (rank-candidates (set->list existing-candidates)))
+    (define voting-for
+      (for/first ([candidate (in-list priorities)]
+                  #:when (member (candidate-name candidate) available-candidates))
+                (candidate-name candidate)))
+
+    (define second-vote
+      (for/first ([candidate (in-list priorities)]
+                  #:when (and (member (candidate-name candidate) available-candidates) (not (string=? (candidate-name candidate) voting-for))))
+                  (candidate-name candidate)))
+    (log-caucus-evt "Greedy voter ~a is submitting two votes!" name)
+    (announce-vote leader-chan (vote name voting-for))
+    (announce-vote leader-chan (vote name (if second-vote second-vote voting-for))))
 
   (voter-skeleton name region greedy-voting voter-registry candidate-registry))
 
 ;; Make a voter thread that always votes for the same candidate
 (define (make-stubborn-voter name region favorite-candidate voter-registry candidate-registry)
-  (define stubborn-voting
-    (λ (existing-candidates available-candidates leader-chan)
-       (log-caucus-evt "Stubborn voter ~a is voting for ~a again!" name favorite-candidate)
-       (announce-vote leader-chan (vote name favorite-candidate))))
+  (define (stubborn-voting existing-candidates available-candidates leader-chan)
+    (log-caucus-evt "Stubborn voter ~a is voting for ~a again!" name favorite-candidate)
+    (announce-vote leader-chan (vote name favorite-candidate)))
 
   (voter-skeleton name region stubborn-voting voter-registry candidate-registry))
 
 ;; Make a voter that sleeps through their vote (doesn't vote)
 (define (make-sleepy-voter name region voter-registry candidate-registry)
-  (define sleepy-voting
-    (λ (x y z) (log-caucus-evt "Sleepy voter ~a has slept through their vote!" name)))
+  (define (sleepy-voting x y z)
+    (log-caucus-evt "Sleepy voter ~a has slept through their vote!" name))
 
-  (voter-skeleton name region sleepy-voting voter-registry candidate-registry))
+(voter-skeleton name region sleepy-voting voter-registry candidate-registry))
 
 ;; Submit a vote to the vote leader
 ;; NOTE this is put in another thread to prevent deadlocks in voters
@@ -292,7 +290,7 @@
   (thread
     (thunk
       (sleep 1) ;; to make sure all other actors get situated first
-      (log-caucus-evt "The Vote Leader is ready to run the caucus!")
+      (log-caucus-evt "The Vote Leader in region ~a is ready to run the caucus!" region)
 
       ;; Start a sequence of votes to determine an elected candidate
       ;; (Setof Name) (Setof Name) -> Candidate
@@ -325,7 +323,7 @@
             (thread (thunk (channel-put (voter-voting-chan voter) (request-vote eligible-cand-names recv-vote-chan))))
             (values (voter-name voter) recv-vote-chan)))
                 
-        (log-caucus-evt "The Vote Leader is beginning a new round of voting!")
+        (log-caucus-evt "The Vote Leader in region ~a is beginning a new round of voting!" region)
         (define eligible-candidates (receive-candidates candidate-blacklist))
         (define eligible-voters (receive-voters voter-blacklist))
         (define voting-chan-table (issue-votes eligible-voters eligible-candidates))
@@ -357,7 +355,7 @@
             (define their-votes (hash-ref votes (candidate-name front-runner) 0))
             (cond
               [(> their-votes (/ (hash-count voting-record) 2))
-               (log-caucus-evt "Candidate ~a has been elected!" (candidate-name front-runner))
+               (log-caucus-evt "Candidate ~a has been elected in region ~a!" (candidate-name front-runner) region)
                front-runner]
               [else (next-round voter-blacklist voting-record votes)]))
 
@@ -369,7 +367,7 @@
               (channel-put (candidate-results-chan cand-struct) (ballot-results votes)))
             (channel-put (candidate-results-chan losing-cand) (loser (candidate-name losing-cand)))
 
-            (log-caucus-evt "Candidate ~a has been eliminated from the race!" (candidate-name losing-cand))
+            (log-caucus-evt "Candidate ~a has been eliminated from the race in region ~a!" (candidate-name losing-cand) region)
             (run-caucus (set-add candidate-blacklist (candidate-name losing-cand)) voter-blacklist))
 
           ;; Determine if all votes for the round have concluded
@@ -382,15 +380,17 @@
           (define (try-cast-vote name candidate voter-blacklist voting-record)
             (cond
               [(set-member? voter-blacklist name)
-               (log-caucus-evt "Invalid voter ~a has tried to vote!" name)
+               (log-caucus-evt "Invalid voter ~a has tried to vote in region ~a!" name region)
                (values voter-blacklist voting-record)]
               [(hash-has-key? voting-record name)
                (log-caucus-evt "Voter ~a has already voted! ~a is no longer a valid voter!" name name)
                (values (set-add voter-blacklist name) (hash-remove voting-record name))]
               [(andmap (λ (cand) (not (string=? candidate (candidate-name cand)))) (set->list candidates))
-               (log-caucus-evt "Voter ~a voted for candidate ~a, who isn't currently an eligible candidate!" name candidate)
+               (log-caucus-evt "Voter ~a voted for candidate ~a, who isn't currently an eligible candidate in region ~a!" name candidate region)
                (values (set-add voter-blacklist name) voting-record)]
-              [else (values voter-blacklist (hash-set voting-record name candidate))]))
+              [else
+                (log-caucus-evt "Voter ~a in region ~a has successfully voted for candidate ~a!" name region candidate)
+                (values voter-blacklist (hash-set voting-record name candidate))]))
 
           (define handle-vote
             (match-lambda

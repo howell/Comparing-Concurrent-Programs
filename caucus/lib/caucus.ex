@@ -96,7 +96,7 @@ defmodule AbstractRegistry do
     spawn fn -> loop(type, MapSet.new(), Map.new(), MapSet.new()) end
   end
 
-  def loop(type, values, publications, subscribers) do
+  defp loop(type, values, publications, subscribers) do
     receive do
       # Receiving a struct of the module Type, update all current subscribers with new data
       {:publish, pid, %^type{} = new_val} ->
@@ -126,7 +126,7 @@ defmodule AbstractRegistry do
   end
 
   # produce the payload delivered to subscribers of the server
-  def the_package(values, type) do
+  defp the_package(values, type) do
     %AbstractRegistry{values: values, type: type}
   end
 end
