@@ -20,10 +20,10 @@
 # a VotingStrategy is a Module with a function that contains a `vote` function with the signature:
 #   Name [Setof Candidate] [Setof Candidate] PID ([Setof Candidate] -> [Setof Candidate]) -> void
 
-# a CandData is a %CandData{cands: [Setof CandStruct], lookup: [Mapof Name -> CandStruct], blacklist: [Setof CandStruct], tally: [Mapof Name -> Number]}
+# a CandData is a %CandData{cands: [Setof CandStruct], lookup: [Mapof Name -> CandStruct], blacklist: [Setof CandStruct]}
 # CandData represents the status of Candidates during a Vote
 defmodule CandData do
-  defstruct [:cands, :lookup, :blacklist, :tally]
+  defstruct [:cands, :lookup, :blacklist]
 end
 
 # a VoterData is a %VoterData{voters: [Setof VoterStruct], lookup: [Mapof Name -> VoterStruct], votes: [Mapof Name -> Name]}
