@@ -24,7 +24,7 @@
 ;; a Round is a (round ID Region (Listof Name))
 (assertion-struct round (id region candidates))
 
-;; a Candidate is a (candidate Name TaxRate Threshold)
+;; a Candidate is a (candidate Name TaxRate)
 (assertion-struct candidate (name tax-rate))
 
 ;; a Tally is a (tally Name Region VoteCount)
