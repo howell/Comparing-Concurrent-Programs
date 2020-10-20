@@ -1,5 +1,9 @@
 #lang typed/syndicate/roles
 
+;; TODO - wrap timer driver
+(assertion-struct later-than : LaterThanT (when))
+
+
 (define-type-alias Name String)
 (define-type-alias ID Symbol)
 (define-type-alias TaxRate Int)
@@ -47,9 +51,23 @@
      (Observe (RoundT ★/t Region ★/t))
      Round))
 
+(define-type-alias LeaderComms
+  (U Voter
+     (Observe (VoterT ★/t Region))
+     Candidate
+     (Observe (CandidateT ★/t ★/t))
+     Round
+     Vote
+     (Observe (VoteT ★/t ID Region ★/t))
+     Elected
+     (Message Tally)
+     (Observe (LaterThanT Int))
+     (LaterThanT Int)))
+
 (define-type-alias τc
   (U CandComms
-     VoterComms))
+     VoterComms
+     LeaderComms))
 
 (define (spawn-candidate [name Name] [tax-rate TaxRate] [threshold Threshold])
   (spawn CandComms
@@ -170,101 +188,103 @@
     #f)
 
   (voter-skeleton voting-procedure name region #t))
-#|
 
 ;; Region -> Leader
-(define (spawn-leader region)
-  (spawn
-    (printf "The Vote Leader for region ~a has joined the event!\n" region)
-    (define/query-set voters (voter $name region) name)
-    (define/query-set candidates (candidate $name _) name)
+(define (spawn-leader [region Region])
+  (spawn LeaderComms
+    (start-facet vote-leader
+      (printf "The Vote Leader for region ~a has joined the event!\n" region)
+      (define/query-set voters (voter $name region) name)
+      (define/query-set candidates (candidate $name _) name)
 
-    ;; [Listof Name] -> Elected
-    (define (run-round current-cands current-voters)
-      (printf "still in the running: ~a\n" current-cands)
-      (define round-id (gensym 'round))
-      (react
-        (field [valid-voters current-voters]
-               [still-in-the-running current-cands]
-               [voter-to-candidate (hash)])
+      (define (run-round [current-cands (Set Name)] [current-voters (Set Name)])
+        (printf "still in the running: ~a\n" current-cands)
+        (define round-id (gensym 'round))
+        (start-facet run-a-round
+          (field [valid-voters (Set Name) current-voters]
+                 [still-in-the-running (Set Name) current-cands]
+                 [voter-to-candidate (Hash Name Name) (hash)])
 
-        (define (invalidate-voter voter)
-          (printf "Voter ~a in region ~a is now an invalid voter!\n" voter region)
-          (voter-to-candidate (hash-remove (voter-to-candidate) voter))
-          (valid-voters (set-remove (valid-voters) voter)))
+          (define (invalidate-voter [voter Name])
+            (printf "Voter ~a in region ~a is now an invalid voter!\n" voter region)
+            (set! voter-to-candidate (hash-remove (ref voter-to-candidate) voter))
+            (set! valid-voters (set-remove (ref valid-voters) voter)))
 
-        (printf "Candidates still in the running in ~a for region ~a: ~a\n" round-id region (still-in-the-running))
-        (assert (round round-id region (set->list (still-in-the-running))))
+          (printf "Candidates still in the running in ~a for region ~a: ~a\n" round-id region (ref still-in-the-running))
+          (assert (round round-id region (set->list (ref still-in-the-running))))
 
-        (on (retracted (voter $name region)) 
-            (when (set-member? (valid-voters) name) 
-              (invalidate-voter name)))
+          (on (retracted (voter $name region))
+              (when (set-member? (ref valid-voters) name)
+                (invalidate-voter name)))
 
-        (on (retracted (candidate $name _))
-            (printf "Candidate ~a in region ~a is now invalid!\n" name region)
-            (when (set-member? (still-in-the-running) name)
-              (still-in-the-running (set-remove (still-in-the-running) name))))
+          (on (retracted (candidate $name _))
+              (printf "Candidate ~a in region ~a is now invalid!\n" name region)
+              (when (set-member? (ref still-in-the-running) name)
+                (set! still-in-the-running (set-remove (ref still-in-the-running) name))))
 
-        (on (asserted (vote $who round-id region $for))
-            ;; should the voter not be eliminated if they're not valid?
-            (when (set-member? (valid-voters) who)
+          (on (asserted (vote $who round-id region $for))
+              ;; should the voter not be eliminated if they're not valid?
+              (when (set-member? (ref valid-voters) who)
+                (cond
+                  [(or (hash-has-key? (ref voter-to-candidate) who)
+                       (not (set-member? current-cands for)))
+                   (invalidate-voter who)]
+                  [else
+                    (printf "Voter ~a has voted for candidate ~a in ~a in region ~a!\n" who for round-id region)
+                    (set! voter-to-candidate (hash-set (ref voter-to-candidate) who for))])))
+
+          (on start
+            (start-facet wait
+              (define one-sec-from-now (get-one-second-from-now))
+
+              (on (asserted (later-than one-sec-from-now))
+                  (printf "Timeout reached on this round!\n")
+                  (define new-voters (for/set ([voter (ref valid-voters)]
+                                               #:when (hash-has-key? (ref voter-to-candidate) voter))
+                                       voter))
+                  (set! valid-voters new-voters))))
+
+          (begin/dataflow
+            (define votes
+              (for/fold ([votes (Hash Name Int) (hash)])
+                        ([(voter cand) (ref voter-to-candidate)])
+                (hash-update/failure votes cand add1 0)))
+
+            (define num-voters (set-count (ref valid-voters)))
+            (define num-voted (for/sum ([votes (in-hash-values votes)])
+                                votes))
+
+            (when (= num-voters num-voted)
+              (printf "Tallying has begun for ~a in region ~a!\n" round-id region)
+              (define front-runner (argmax (lambda ([n Name]) (hash-ref/failure votes n 0))
+                                           (set->list (ref still-in-the-running))))
+              (define their-votes (hash-ref/failure votes front-runner 0))
+              ;; ASSUME: we're OK running a final round with just a single candidate
               (cond
-                [(or (hash-has-key? (voter-to-candidate) who) 
-                     (not (set-member? current-cands for))) 
-                 (invalidate-voter who)]
-                [else 
-                  (printf "Voter ~a has voted for candidate ~a in ~a in region ~a!\n" who for round-id region)
-                  (voter-to-candidate (hash-set (voter-to-candidate) who for))])))
+                [(> their-votes (/ num-voters 2))
+                (printf "Candidate ~a has been elected in region ~a at round ~a!\n" front-runner region round-id)
+                (stop run-a-round
+                  (start-facet over
+                    (assert (elected front-runner region))))]
+                [else
+                  (for ([candidate (ref candidates)])
+                    (send! (tally candidate region (hash-ref/failure votes candidate 0))))
 
-        (on-start
-          (react
-            (define one-sec-from-now (get-one-second-from-now))
-
-            (on (asserted (later-than one-sec-from-now))
-                (printf "Timeout reached on this round!\n")
-                (valid-voters
-                  (list->set (filter (λ (voter) (hash-has-key? (voter-to-candidate) voter)) (set->list (valid-voters))))))))
-
-        (begin/dataflow
-          (define votes
-            (for/fold ([votes (hash)])
-                      ([(voter cand) (in-hash (voter-to-candidate))])
-              (hash-update votes cand add1 0)))
-
-          (define num-voters (set-count (valid-voters)))
-          (define num-voted (for/sum ([votes (in-hash-values votes)])
-                              votes))
-
-          (when (= num-voters num-voted)
-            (printf "Tallying has begun for ~a in region ~a!\n" round-id region)
-            (define front-runner (argmax (lambda (n) (hash-ref votes n 0))
-                                        (set->list (still-in-the-running))))
-            (define their-votes (hash-ref votes front-runner 0))
-            ;; ASSUME: we're OK running a final round with just a single candidate
-            (cond
-              [(> their-votes (/ num-voters 2))
-              (printf "Candidate ~a has been elected in region ~a at round ~a!\n" front-runner region round-id)
-              (stop-current-facet
-                (react
-                  (assert (elected front-runner region))))]
-              [else
-                (for ([candidate (in-set (candidates))])
-                  (send! (tally candidate region (hash-ref votes candidate 0))))
-
-                (define loser (argmin (lambda (n) (hash-ref votes n 0))
-                                    (set->list (still-in-the-running))))
-                (printf "The front-runner for ~a in region ~a is ~a! The loser is ~a!\n" round-id region front-runner loser)
-                (define next-candidates (set-intersect (candidates) (set-remove (still-in-the-running) loser)))
-                (stop-current-facet (run-round next-candidates (valid-voters)))])))))
+                  (define loser (argmin (lambda ([n Name]) (hash-ref/failure votes n 0))
+                                        (set->list (ref still-in-the-running))))
+                  (printf "The front-runner for ~a in region ~a is ~a! The loser is ~a!\n" round-id region front-runner loser)
+                  (define next-candidates (set-intersect (ref candidates) (set-remove (ref still-in-the-running) loser)))
+                  (stop run-a-round #;TODO #;(run-round next-candidates (ref valid-voters)))])))))
 
 
-    (define one-second-from-now (+ 1000 (current-inexact-milliseconds)))
-    (on-start
-      (react
-        (on (asserted (later-than one-second-from-now))
-            ;; ASSUME: at least one candidate and voter at this point
-            (printf "The race has begun in region ~a!\n" region)
-            (stop-current-facet (run-round (candidates) (voters))))))))
+      (define one-second-from-now (get-one-second-from-now))
+      (on start
+        (start-facet wait
+          (on (asserted (later-than one-second-from-now))
+              ;; ASSUME: at least one candidate and voter at this point
+              (printf "The race has begun in region ~a!\n" region)
+              (stop wait (run-round (ref candidates) (ref voters)))))))))
+#|
 
 ;; Name -> [[Listof Candidate] -> [Listof Candidate]]
 (define (stupid-sort cand-name)
