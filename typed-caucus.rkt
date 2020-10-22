@@ -1,8 +1,6 @@
 #lang typed/syndicate/roles
 
-;; TODO - wrap timer driver
-(assertion-struct later-than : LaterThanT (when))
-
+(require typed/drivers/timestate)
 
 (define-type-alias Name String)
 (define-type-alias ID Symbol)
@@ -64,10 +62,18 @@
      (Observe (LaterThanT Int))
      (LaterThanT Int)))
 
+(define-type-alias ManagerComms
+  (U LeaderComms
+     (Observe (ElectedT ★/t ★/t))
+     Elected
+     (Outbound Winner)))
+
 (define-type-alias τc
   (U CandComms
      VoterComms
-     LeaderComms))
+     LeaderComms
+     ManagerComms
+     TimeStateDriver))
 
 (define (spawn-candidate [name Name] [tax-rate TaxRate] [threshold Threshold])
   (spawn CandComms
@@ -189,6 +195,8 @@
 
   (voter-skeleton voting-procedure name region #t))
 
+(message-struct start-round : StartRoundT (candidates voters))
+
 ;; Region -> Leader
 (define (spawn-leader [region Region])
   (spawn LeaderComms
@@ -274,8 +282,10 @@
                                         (set->list (ref still-in-the-running))))
                   (printf "The front-runner for ~a in region ~a is ~a! The loser is ~a!\n" round-id region front-runner loser)
                   (define next-candidates (set-intersect (ref candidates) (set-remove (ref still-in-the-running) loser)))
-                  (stop run-a-round #;TODO #;(run-round next-candidates (ref valid-voters)))])))))
+                  (stop run-a-round (realize! (start-round next-candidates (ref valid-voters))))])))))
 
+      (on (realize (start-round ($ candidates (Set Name)) ($ voters (Set Name))))
+          (run-round candidates voters))
 
       (define one-second-from-now (get-one-second-from-now))
       (on start
@@ -283,40 +293,46 @@
           (on (asserted (later-than one-second-from-now))
               ;; ASSUME: at least one candidate and voter at this point
               (printf "The race has begun in region ~a!\n" region)
-              (stop wait (run-round (ref candidates) (ref voters)))))))))
-#|
+              (stop wait (realize! (start-round (ref candidates) (ref voters))))))))))
 
 ;; Name -> [[Listof Candidate] -> [Listof Candidate]]
-(define (stupid-sort cand-name)
-  (λ (candidates)
-     (define candidate? (findf (λ (cand) (string=? cand-name (candidate-name cand))) candidates))
-     (if candidate?
-       (cons candidate? (remove candidate? candidates))
-       candidates)))
+(define (stupid-sort [cand-name Name] -> (→fn (List Candidate) (List Candidate)))
+  (lambda ([candidates (List Candidate)])
+    (define candidate?
+      (for/first ([cand candidates]
+                  #:when (string=? cand-name (candidate-name cand)))
+        cand))
+    (match candidate?
+      [(some $c)
+       (cons c (remove c candidates))]
+      [none candidates])))
 
 ;; -> Manager
-(define (spawn-manager regions)
-  (spawn
-    (field [caucus-results (hash)])
-    (on-start (for ([region regions]) (spawn-leader region)))
+(define (spawn-manager [regions (List Region)])
+  (spawn ManagerComms
+    (start-facet manager
+      (field [caucus-results (Hash Name Int) (hash)])
+      (printf "Manager online\n")
+      (on start (for ([region regions]) (spawn-leader region)))
 
-    (on (asserted (elected $name $region))
-        (caucus-results (hash-update (caucus-results) name add1 0))
-        ;; FIXME name
-        (define num-results
-          (foldl (λ (num acc) (+ acc num)) 0 (hash-values (caucus-results))))
-        (when (= num-results (length regions))
-          (define-values (winning-candidate _)
-            (for/fold ([best-cand #f] [their-votes -1])
-                      ([(cand-name cand-votes) (in-hash (caucus-results))])
-              (if (< cand-votes their-votes)
-                (values best-cand their-votes)
-                (values cand-name cand-votes))))
-          (stop-current-facet 
-            (react 
+      (on (asserted (elected $name $region))
+          (set! caucus-results (hash-update/failure (ref caucus-results) name add1 0))
+          ;; FIXME name
+          (define num-results (for/sum ([num (in-hash-values (ref caucus-results))]) num))
+          (when (= num-results (length regions))
+            (match-define (tuple (some $winning-candidate) _)
+              (for/fold ([best-cand (Maybe Name) none]
+                         [their-votes -1])
+                        ([(cand-name cand-votes) (ref caucus-results)])
+                (if (< cand-votes their-votes)
+                    (tuple best-cand their-votes)
+                    (tuple (some cand-name) cand-votes))))
+            (stop manager
+             (start-facet announce
               (printf "The winner of the election is ~a!\n" winning-candidate)
-              (assert (outbound (winner winning-candidate)))))))))
+              (assert (outbound (winner winning-candidate))))))))))
 
+#|
 
 ;; Assumptions made about the manager:
 ;; Every elected announcement is valid
@@ -326,7 +342,124 @@
 ;; Candidates do actually drop per caucus. Nice.
 |#
 
-(run-ground-dataspace (U τc (Observe Candidate))
-  (spawn-candidate "Biden" 1000 1000000)
-  (spawn-stubborn-candidate "Trump" 1 100000000000)
-  (spawn-greedy-voter "Sam" "Texas" "Biden" "Trump"))
+(define (startup)
+  ;; this is a dumb hack to make up for typed-syndicate not doing capture-actor-actions
+  (spawn τc
+   (start-facet boot
+     (on start
+         ;; Region Manager
+         (spawn-manager (list "region1" "region2" "region3" "region4" "region5"))
+
+         ;; First Caucus: Region 1
+         (spawn-voter "Rax" "region1" (stupid-sort "Tulsi"))
+         (spawn-voter "Bax" "region1" (stupid-sort "Tulsi"))
+         (spawn-voter "Tax" "region1" (stupid-sort "Tulsi"))
+         (spawn-voter "Lax" "region1" (stupid-sort "Tulsi"))
+         (spawn-voter "Fax" "region1" (stupid-sort "Tulsi"))
+         (spawn-voter "Kax" "region1" (stupid-sort "Tulsi"))
+         (spawn-voter "Joe" "region1" (stupid-sort "Bernie"))
+         (spawn-voter "Moe" "region1" (stupid-sort "Biden"))
+         (spawn-voter "Zoe" "region1" (stupid-sort "Bernie"))
+         (spawn-voter "Doe" "region1" (stupid-sort "Bernie"))
+         (spawn-voter "Wow" "region1" (stupid-sort "Bernie"))
+         (spawn-voter "Bob" "region1" (stupid-sort "Bernie"))
+         (spawn-greedy-voter "Abc" "region1" "Tulsi" "Biden")
+         (spawn-greedy-voter "Def" "region1" "Tulsi" "Biden")
+         (spawn-greedy-voter "Ghi" "region1" "Tulsi" "Biden")
+         (spawn-greedy-voter "Jkl" "region1" "Biden" "Tulsi")
+         (spawn-greedy-voter "Mno" "region1" "Biden" "Tulsi")
+         (spawn-greedy-voter "Pqr" "region1" "Biden" "Tulsi")
+         (spawn-stubborn-voter "Xyz" "region1" "Matthias")
+         (spawn-sleepy-voter "G" "region1")
+         (spawn-leaving-voter "AB1" "region1" (stupid-sort "1") -1)
+         (spawn-leaving-voter "AB2" "region1" (stupid-sort "1") -1)
+         (spawn-leaving-voter "AB3" "region1" (stupid-sort "1") -1)
+         (spawn-leaving-voter "AB4" "region1" (stupid-sort "2") -1)
+         (spawn-leaving-voter "AB5" "region1" (stupid-sort "2") -1)
+         (spawn-leaving-voter "AB6" "region1" (stupid-sort "2") -1)
+         (spawn-leaving-voter "AB7" "region1" (stupid-sort "2") -1)
+         (spawn-leaving-voter "AB8" "region1" (stupid-sort "3") -1)
+         (spawn-leaving-voter "AB9" "region1" (stupid-sort "3") -1)
+         (spawn-leaving-voter "AB0" "region1" (stupid-sort "3") -1)
+         (spawn-late-joining-voter "BA0" "region1" (stupid-sort "Tulsi") 1)
+         (spawn-late-joining-voter "BA1" "region1" (stupid-sort "Tulsi") 1)
+         (spawn-late-joining-voter "BA2" "region1" (stupid-sort "Tulsi") 1)
+         (spawn-late-joining-voter "BA3" "region1" (stupid-sort "Tulsi") 1)
+         (spawn-late-joining-voter "BA4" "region1" (stupid-sort "Tulsi") 1)
+         (spawn-late-joining-voter "BA5" "region1" (stupid-sort "Tulsi") 1)
+         (spawn-late-joining-voter "BA6" "region1" (stupid-sort "Tulsi") 1)
+         (spawn-late-joining-voter "BA7" "region1" (stupid-sort "Tulsi") 1)
+         (spawn-late-joining-voter "BA8" "region1" (stupid-sort "Tulsi") 1)
+         (spawn-late-joining-voter "BA9" "region1" (stupid-sort "Tulsi") 1)
+         (spawn-not-registered-voter "XY0" "region1" (stupid-sort "Tulsi"))
+         (spawn-not-registered-voter "XY1" "region1" (stupid-sort "Tulsi"))
+         (spawn-not-registered-voter "XY2" "region1" (stupid-sort "Tulsi"))
+         (spawn-not-registered-voter "XY3" "region1" (stupid-sort "Tulsi"))
+         (spawn-not-registered-voter "XY4" "region1" (stupid-sort "Tulsi"))
+         (spawn-not-registered-voter "XY5" "region1" (stupid-sort "Tulsi"))
+         (spawn-not-registered-voter "XY6" "region1" (stupid-sort "Tulsi"))
+         (spawn-not-registered-voter "XY7" "region1" (stupid-sort "Tulsi"))
+         (spawn-not-registered-voter "XY8" "region1" (stupid-sort "Tulsi"))
+         (spawn-not-registered-voter "XY9" "region1" (stupid-sort "Tulsi"))
+
+         ;; Second Caucus: Region 2
+         (spawn-voter "AAA" "region2" (stupid-sort "Bernie"))
+         (spawn-voter "AAB" "region2" (stupid-sort "Donkey"))
+         (spawn-voter "AAC" "region2" (stupid-sort "Donkey"))
+         (spawn-voter "AAD" "region2" (stupid-sort "Biden"))
+         (spawn-voter "AAE" "region2" (stupid-sort "Biden"))
+         (spawn-voter "AAF" "region2" (stupid-sort "Biden"))
+         (spawn-voter "AAG" "region2" (stupid-sort "Biden"))
+         (spawn-voter "AAH" "region2" (stupid-sort "Biden"))
+         (spawn-voter "AAI" "region2" (stupid-sort "Biden"))
+         (spawn-voter "AAJ" "region2" (stupid-sort "Biden"))
+         (spawn-voter "AAK" "region2" (stupid-sort "Biden"))
+
+         ;; Third Caucus: Region 3
+         (spawn-voter "AAL" "region3" (stupid-sort "Bernie"))
+         (spawn-voter "AAM" "region3" (stupid-sort "Bernie"))
+         (spawn-voter "AAN" "region3" (stupid-sort "Bernie"))
+         (spawn-voter "AAO" "region3" (stupid-sort "Bernie"))
+         (spawn-voter "AAP" "region3" (stupid-sort "Bernie"))
+         (spawn-voter "AAQ" "region3" (stupid-sort "Bernie"))
+         (spawn-voter "AAR" "region3" (stupid-sort "Bernie"))
+         (spawn-voter "AAS" "region3" (stupid-sort "Bernie"))
+         (spawn-voter "AAT" "region3" (stupid-sort "Biden"))
+         (spawn-voter "AAU" "region3" (stupid-sort "Biden"))
+         (spawn-voter "AAV" "region3" (stupid-sort "Biden"))
+
+         ;; Fourth Caucus: Region 4
+         (spawn-voter "AAL" "region4" (stupid-sort "Biden"))
+         (spawn-voter "AAM" "region4" (stupid-sort "Biden"))
+         (spawn-voter "AAN" "region4" (stupid-sort "Biden"))
+         (spawn-voter "AAO" "region4" (stupid-sort "Biden"))
+         (spawn-voter "AAP" "region4" (stupid-sort "Biden"))
+         (spawn-voter "AAQ" "region4" (stupid-sort "Biden"))
+         (spawn-voter "AAR" "region4" (stupid-sort "Biden"))
+         (spawn-voter "AAS" "region4" (stupid-sort "Biden"))
+         (spawn-voter "AAT" "region4" (stupid-sort "Biden"))
+         (spawn-voter "AAU" "region4" (stupid-sort "Biden"))
+         (spawn-voter "AAV" "region4" (stupid-sort "Biden"))
+
+         ;; Fifth Caucus: Region 5
+         (spawn-voter "AAW" "region5" (stupid-sort "Biden"))
+         (spawn-voter "AAX" "region5" (stupid-sort "Biden"))
+         (spawn-voter "AAY" "region5" (stupid-sort "Biden"))
+         (spawn-voter "AAZ" "region5" (stupid-sort "Biden"))
+         (spawn-voter "ABA" "region5" (stupid-sort "Biden"))
+         (spawn-voter "ABB" "region5" (stupid-sort "Biden"))
+         (spawn-voter "ABC" "region5" (stupid-sort "Biden"))
+         (spawn-voter "ABD" "region5" (stupid-sort "Biden"))
+         (spawn-voter "ABE" "region5" (stupid-sort "Biden"))
+         (spawn-voter "ABF" "region5" (stupid-sort "Biden"))
+         (spawn-voter "ABG" "region5" (stupid-sort "Biden"))
+
+         ;; Candidates
+         (spawn-candidate "Bernie" 50 2)
+         (spawn-candidate "Biden" 25 1)
+         (spawn-candidate "Tulsi" 16 300)
+         (spawn-stubborn-candidate "Donkey" 0 1000)))))
+
+(run-ground-dataspace τc
+                      (activate!)
+                      (startup))
