@@ -1,6 +1,7 @@
 #lang typed/syndicate/roles
 
-(require typed/drivers/timestate)
+(require (except-in typed/drivers/timestate activate!)
+         (prefix-in timestate: (only-in typed/drivers/timestate activate!)))
 
 (define-type-alias Name String)
 (define-type-alias ID Symbol)
@@ -20,9 +21,6 @@
 
 (require-struct candidate #:as CandidateT #:from "caucus_struct.rkt")
 (define-type-alias Candidate (CandidateT Name TaxRate))
-(define (candidate-name [c Candidate])
-  (match-define (candidate $name _) c)
-  name)
 
 (require-struct tally #:as TallyT #:from "caucus_struct.rkt")
 (define-type-alias Tally (TallyT Name Region VoteCount))
@@ -150,7 +148,7 @@
 (define (spawn-leaving-voter [name Name] [region Region] [rank-candidates (→fn (List Candidate) (List Candidate))] [round-limit Int])
   (spawn VoterComms
     (start-facet count-rounds
-      (field [round-count Int 0])
+      (field [round-count 0])
 
       (define (voting-procedure [id ID] [region Region] [round-candidates (List Name)] [candidates (Set Candidate)])
         (set! round-count (add1 (ref round-count)))
@@ -166,8 +164,8 @@
 (define (spawn-late-joining-voter [name Name] [region Region] [rank-candidates (→fn (List Candidate) (List Candidate))] [round-limit Int])
   (spawn VoterComms
     (start-facet count-rounds
-      (field [round-count Int 0]
-             [registered? Bool #f])
+      (field [round-count 0]
+             [registered? #f])
 
       (begin/dataflow
         (when (ref registered?)
@@ -209,8 +207,8 @@
         (printf "still in the running: ~a\n" current-cands)
         (define round-id (gensym 'round))
         (start-facet run-a-round
-          (field [valid-voters (Set Name) current-voters]
-                 [still-in-the-running (Set Name) current-cands]
+          (field [valid-voters current-voters]
+                 [still-in-the-running current-cands]
                  [voter-to-candidate (Hash Name Name) (hash)])
 
           (define (invalidate-voter [voter Name])
@@ -461,5 +459,5 @@
          (spawn-stubborn-candidate "Donkey" 0 1000)))))
 
 (run-ground-dataspace τc
-                      (activate!)
+                      (timestate:activate!)
                       (startup))

@@ -1,6 +1,12 @@
 #lang syndicate/actor
 
-(provide voter vote round candidate candidate-name tally elected winner)
+(provide (struct-out voter)
+         (struct-out vote)
+         (struct-out round)
+         (struct-out candidate)
+         (struct-out tally)
+         (struct-out elected)
+         (struct-out winner))
 
 ;; a Name is a (caucus-unique) String
 
