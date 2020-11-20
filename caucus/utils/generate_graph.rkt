@@ -4,15 +4,6 @@
 (require plot/no-gui)
 (require "parse_diff.rkt")
 
-;; FIXME get the max lengths of all three files and use that for the y-axis
-;; TODO
-;; How should the CLI work?
-;; 1. you should specify the label as a command-line argument
-;; 2. you should specify old and new
-;; 3. line numbers should be collected from here and the math calculated
-;; 4. calculate the diff from the racket stuff
-;; 5. spit out some numbers elsewhere
-
 (define (tick-formatter _min _max pre-ticks)
   (for/list ([tick-val pre-ticks])
     (number->string (pre-tick-value tick-val))))
