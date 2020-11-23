@@ -43,7 +43,5 @@
                  [plot-y-far-ticks no-ticks])
     (plot-file (rectangles change-rectangles) output-file #:title graph-title #:x-label "Line of code" #:y-label "Number of lines inserted" #:x-min 1 #:x-max x-max #:y-max y-max)))
 
-(define-values (lang new-file)
-  (command-line #:args (lang new-file) (values lang new-file)))
-
-(plot-changes lang "input.txt" new-file 650 100)
+(command-line #:args (lang new-file)
+  (plot-changes lang "input.txt" new-file 650 100))
