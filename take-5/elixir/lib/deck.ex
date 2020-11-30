@@ -7,10 +7,10 @@ defmodule Deck do
     for i <- 1..104 do
       bulls =
         cond do
-          i % 55 == 0 -> 7
-          i % 11 == 0 -> 5
-          i % 10 == 0 -> 3
-          i % 5 == 0 -> 2
+          rem(i, 55) == 0 -> 7
+          rem(i, 11) == 0 -> 5
+          rem(i, 10) == 0 -> 3
+          rem(i, 5) == 0 -> 2
           true -> 1
         end
       {:card, i, bulls}

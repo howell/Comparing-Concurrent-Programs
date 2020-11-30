@@ -27,7 +27,7 @@ defmodule Dealer do
   
   defp initialize_game(players, main_pid) do
     starting_deck = Deck.create_deck()
-    player_names = Map.new(players, fn {:player, name, _} -> name end)
+    player_names = Enum.map(players, fn {:player, name, _} -> name end)
     {:ok, starting_hands, new_deck} = Deck.deal(starting_deck, player_names)
     # Elixir ranges are inclusive on both ends
     {starting_rows, _} = Enum.reduce(0..4, {[], new_deck}, fn _, {curr_rows, curr_deck} ->
@@ -39,19 +39,18 @@ defmodule Dealer do
   end
 
   defp play_game(players, hands, rows, scores, main_pid) do
-    play_round(0, players, hands, rows, scores)
+    play_round(0, players, hands, rows, scores, main_pid)
   end
 
-  defp play_round(round_no, players, hands, rows, scores) do
+  defp play_round(round_no, players, hands, rows, scores, main_pid) do
     for {:player, name, pid} <- players do
       send pid, {:round, Map.get(hands, name), rows, self()}
     end
 
     moves = for _ <- 1..10 do
-      receive do: m -> m
-      # receive do
-      #   m -> m
-      # end
+        receive do
+          m -> m
+        end
     end
 
     {new_rows, new_scores} = Rules.play_round(rows, moves, scores)
@@ -64,7 +63,7 @@ defmodule Dealer do
         Map.put(new_hands, name, List.delete(Map.get(hands, name), c))
       end)
 
-      play_round(round_no + 1, players, new_hands, new_rows, new_scores)
+      play_round(round_no + 1, players, new_hands, new_rows, new_scores, main_pid)
     end
   end
 end
@@ -92,7 +91,7 @@ end
 # a Round is a {:round, [List-of Card], [List-of Row], PID}
 
 defmodule RandomPlay do
-  def pick_card(rows, hand) do
+  def pick_card(_rows, hand) do
     Enum.random(hand)
   end
 end

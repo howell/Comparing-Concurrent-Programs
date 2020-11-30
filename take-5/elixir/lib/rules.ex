@@ -3,7 +3,7 @@
 
 defmodule Rules do
   def play_round(rows, moves, scores) do
-    sorted_moves = Enum.sort_by(moves, fn {:move, player, {:card, rank, _}} -> rank end, &(&1 < &2))
+    sorted_moves = Enum.sort_by(moves, fn {:move, _player, {:card, rank, _}} -> rank end, &(&1 < &2))
     Enum.reduce(sorted_moves, {rows, scores}, fn {:move, player, c}, {curr_rows, curr_scores} ->
       {new_rows, added_bulls} = play_card(c, curr_rows)
       {
@@ -19,7 +19,7 @@ defmodule Rules do
   end
 
   defp play_card(c = {:card, played_rank, _}, rows) do
-    selected_row = row_for_card(card, rows)
+    selected_row = row_for_card(c, rows)
     {:row, row_cards} = selected_row
     [{:card, rank, _} | _] = row_cards
 
@@ -34,7 +34,7 @@ defmodule Rules do
   end
 
   defp row_for_card({:card, played_rank, _}, rows) do
-    playable_rows = Enum.filter(rows, fn {:row, [top | rest]} -> 
+    playable_rows = Enum.filter(rows, fn {:row, [top | _rest]} -> 
       case top do
         {:card, comp_rank, _} -> comp_rank < played_rank
       end
@@ -43,7 +43,7 @@ defmodule Rules do
     if length(playable_rows) == 0 do
       Enum.min_by(rows, fn r -> bulls_in_row(r) end)
     else
-      Enum.max_by(playable_rows, fn {:row, [top | rest]} ->
+      Enum.max_by(playable_rows, fn {:row, [top | _rest]} ->
         case top do
           {:card, rank, _} -> rank
         end
