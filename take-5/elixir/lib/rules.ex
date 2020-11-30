@@ -1,5 +1,4 @@
 # a Row is a {:row, [List-of Card]}
-# TEMP Scores is a [Hash-of PlayerID Number]
 # a Move is a {:move, PlayerID, Card}
 
 defmodule Rules do
@@ -12,6 +11,11 @@ defmodule Rules do
         Map.update!(curr_scores, player, &(&1 + added_bulls))
       }
     end)
+  end
+
+  def lowest_scores(scores) do
+    lowest_score = Enum.min(Map.values(scores))
+    Enum.filter(Map.keys(scores), fn player -> Map.get(scores, player) == lowest_score end)
   end
 
   defp play_card(c = {:card, played_rank, _}, rows) do
