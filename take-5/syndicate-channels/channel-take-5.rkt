@@ -29,14 +29,17 @@
 ;;
 ;; 2. The Player, which acts in the game and tries to win while obeying the
 ;;    rules. There can be between 2 and 10 Players.
+;;
+;; 3. The Game Observer, which monitors and waits for the result of a run
+;;    of the game. There is one per game instance.
 
-;; FIXME specify the channels that messages are sent to/received from.
 ;; Conversations
 ;; There is a conversation about playing one round of the game. The Dealer starts a round
-;; by sending each participating Player a Round message, notifying the Player of their hand,
-;; the current state of the rows, and the channel to send Move messages to. A Player makes
-;; a move by sending a Move message to the Dealer, containing the PlayerID of the player, the
-;; current round number, and the card that the player has selected from their hand to play.
+;; by sending each participating Player a Round message on the corresponding Player's
+;; personal channel, containing the Player's hand, the current rows, and the a channel
+;; provided by the Dealer for posting Move messages to. A Player makes a move by sending
+;; a Move message to that channel, containing the PlayerID of the Player, the current
+;; round number, and the card that the Player has selected from their hand to play.
 ;;
 ;; The Dealer leads 10 rounds, in sequence, in this way.
 ;;
@@ -44,15 +47,22 @@
 ;; 1. Players only play cards in their Hand
 ;; 2. Players send Move messages with their own PlayerID only
 ;; 3. Players only send one Move message per round
+;; 
+;; There is a conversation about the result of the game. The Game Observer observes a channel
+;; for a DeclaredWinners message, containing the players from that game with the lowest scores,
+;; indicating the end of and results for a game instance. The Dealer posts a DeclaredWinners message
+;; to the channel that the Game Observer is listening to when the game instance ends.
 
-;; Deck [List-of PlayerStruct] [Chan-of DeclaredWinners] -> void
-(define (make-dealer initial-deck players main-chan)
+;; Deck [List-of PlayerStruct] -> void
+(define (make-dealer initial-deck players)
+  (define game-result-chan (make-channel))
   (define moves-channel (make-channel))
 
   (define num-players (length players))
   (unless (and (>= num-players 2) (<= num-players 10))
     (error "Take-5 is played with 2-10 players"))
 
+  ;; Runs all 10 rounds of the game and posts the winners to the game results channel
   ;; [List-of Row] [Hash-of PlayerID Hand] [Hash-of PlayerID Score] -> void
   (define (run-rounds rows hands scores)
     ;; Loop once for each round
@@ -87,7 +97,7 @@
         [else ;; Game is over, determine a winner
           (define winner/s (lowest-score/s scores))
           (log-winner/s winner/s)
-          (channel-put main-chan (declared-winner/s winner/s))])))
+          (channel-put game-result-chan (declared-winner/s winner/s))])))
 
   (thread
     (thunk
@@ -129,11 +139,7 @@
 
   (player pid round-chan))
 
-;; definitely rename, might make sense to create it in the dealer
-;; this _should_ be described in the protocol
-(define main-chan (make-channel))
-
 (define all-players (make-player* '(a b c d)))
-(make-dealer (shuffle the-deck) all-players main-chan)
+(define game-result-chan (make-dealer (shuffle the-deck) all-players))
 
-(channel-get main-chan)
+(channel-get game-result-chan)
