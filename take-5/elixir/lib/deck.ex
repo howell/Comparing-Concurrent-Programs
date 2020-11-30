@@ -4,7 +4,7 @@
 defmodule Deck do
   # -> Deck
   def create_deck do
-    for i <- 1..104 do
+    deck = for i <- 1..104 do
       bulls =
         cond do
           rem(i, 55) == 0 -> 7
@@ -15,6 +15,7 @@ defmodule Deck do
         end
       {:card, i, bulls}
     end
+    Enum.shuffle(deck)
   end
 
   # Deck -> (U {:ok, Card, Deck} {:error, String})

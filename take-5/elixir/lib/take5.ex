@@ -39,7 +39,8 @@ defmodule Dealer do
   end
 
   defp play_game(players, hands, rows, scores, main_pid) do
-    play_round(0, players, hands, rows, scores, main_pid)
+    Logging.log_rows(rows)
+    play_round(1, players, hands, rows, scores, main_pid)
   end
 
   defp play_round(round_no, players, hands, rows, scores, main_pid) do
@@ -47,16 +48,21 @@ defmodule Dealer do
       send pid, {:round, Map.get(hands, name), rows, self()}
     end
 
-    moves = for _ <- 1..10 do
+    moves = for _ <- 1..length(players) do
         receive do
-          m -> m
+          m ->
+            Logging.log_move(m)
+            m
         end
     end
 
     {new_rows, new_scores} = Rules.play_round(rows, moves, scores)
+    Logging.log_rows(new_rows)
+    Logging.log_scores(new_scores)
 
     if round_no == 10 do
-      winner_s = Rules.lowest_scores(scores)
+      winner_s = Rules.lowest_scores(new_scores)
+      Logging.log_winners(winner_s)
       send main_pid, {:declared_winner_s, winner_s}
     else
       new_hands = Enum.reduce(moves, %{}, fn {:move, name, c}, new_hands ->
@@ -83,12 +89,13 @@ defmodule Player do
   defp play_round(name, play_procedure) do
     receive do
       {:round, cards, rows, pid} -> 
-        send pid, {:move, name, play_procedure.pick_card(rows, cards)}
+        selected_card = play_procedure.pick_card(rows, cards)
+        Logging.log_player_decision(name, selected_card, cards)
+        send pid, {:move, name, selected_card}
     end
     play_round(name, play_procedure)
   end
 end
-# a Round is a {:round, [List-of Card], [List-of Row], PID}
 
 defmodule RandomPlay do
   def pick_card(_rows, hand) do
