@@ -46,14 +46,3 @@
         [(member i '(11 22 33 44 66 77 88 99)) 5]
         [else 1]))
     (card i bulls)))
-
-;; (Listof A) -> (Listof A)
-(define (shuffle deck)
-  (define-values (shuffled _)
-    (for/fold ([shuffled-cards '()]
-               [deck deck])
-              ([_ (in-list deck)])
-      (define pick-one (random-ref deck))
-      (values (cons pick-one shuffled-cards)
-              (remove pick-one deck))))
-  shuffled)

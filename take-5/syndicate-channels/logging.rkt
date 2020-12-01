@@ -50,7 +50,3 @@
                                     #:before-last " and "
                                     #:after-last " tie!"))]))
 
-
-;; PlayerId Row -> Void
-(define (log-row-pickup pid r)
-  (log-take-5-debug "~a picks up row ~v" pid r))

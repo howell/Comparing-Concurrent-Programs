@@ -26,6 +26,9 @@
 (struct round-has-begun (number) #:transparent)
 ;; Round = (round-has-begun Nat) the Nat is between 1 and 10
 
+(struct game-board (rows) #:transparent)
+;; GameBoard = (game-board [List-of Row])
+
 ;; a GamePlayer is a function (Setof Card) Rows -> Card
 ;; that picks out a card to play based on a current state of the rows.
 

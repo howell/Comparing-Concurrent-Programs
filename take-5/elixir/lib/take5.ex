@@ -49,7 +49,7 @@ defmodule Dealer do
     {:ok, starting_hands, new_deck} = Deck.deal(starting_deck, player_names)
 
     # Elixir ranges are inclusive on both ends
-    {starting_rows, _} = Enum.reduce(0..4, {[], new_deck}, fn _, {curr_rows, curr_deck} ->
+    {starting_rows, _} = Enum.reduce(1..4, {[], new_deck}, fn _, {curr_rows, curr_deck} ->
       {:ok, drawn_card, new_deck} = Deck.draw_one(curr_deck)
       {[{:row, [drawn_card]} | curr_rows], new_deck}
     end)

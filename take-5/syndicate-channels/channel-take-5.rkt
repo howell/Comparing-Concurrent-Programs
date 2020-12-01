@@ -106,7 +106,7 @@
       (define-values (starting-rows _)
         (for/fold ([rows '()]
                    [curr-deck deck])
-                  ([_ (in-range 5)])
+                  ([_ (in-range 4)])
           (define-values (starting-card new-deck) (draw-one curr-deck))
           (values (cons (row (list starting-card)) rows) new-deck)))
 
