@@ -1,12 +1,12 @@
 # a Row is a {:row, [List-of Card]}
-# a Move is a {:move, PlayerID, Card}
+# a Move is a {:move, RoundNo, PlayerID, Card}
 
 defmodule Rules do
   # Execute all submitted moves for a round
   # [List-of Row] [List-of Move] Scores -> {[List-of Row], Scores}
   def play_round(rows, moves, scores) do
-    sorted_moves = Enum.sort_by(moves, fn {:move, _player, {:card, rank, _}} -> rank end, &(&1 < &2))
-    Enum.reduce(sorted_moves, {rows, scores}, fn {:move, player, c}, {curr_rows, curr_scores} ->
+    sorted_moves = Enum.sort_by(moves, fn {:move, _no, _player, {:card, rank, _}} -> rank end, &(&1 < &2))
+    Enum.reduce(sorted_moves, {rows, scores}, fn {:move, _no, player, c}, {curr_rows, curr_scores} ->
       {new_rows, added_bulls} = play_card(c, curr_rows)
       {
         new_rows,

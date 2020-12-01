@@ -1,11 +1,12 @@
-# Protocol
+####### Protocol #######
 #
 # a PlayerID is a Symbol
 # a Hand is a [List-of Card]
 # a Score is a Nat
 # a Scores is a [Hash-of PlayerID Score]
+# a RoundNo is a Nat
 #
-# a Round is a {:round, [List-of Card], [List-of Row], PID}
+# a Round is a {:round, RoundNo, [List-of Card], [List-of Row], PID}
 # a PlayerInfo is a {:player, PlayerID, PID}
 # a DeclaredWinners is a {:declared_winners, [List-of PlayerID]}
 #
@@ -18,10 +19,11 @@
 #
 # Conversations:
 # There is a conversation about playing one round of the game. The Dealer sends each
-# participating player a Round message, containing the cards in that Player's hand, 
-# the current rows of the game, and the Dealer's PID. Player's respond by sending a
-# Move message to the Dealer's PID, containing the PlayerID of the Player and the card
-# that the Player has selected to play for the round.
+# participating player a Round message, containing the round number, the cards in that
+# Player's hand, the current rows of the game, and the Dealer's PID. Player's respond 
+# by sending a Move message to the Dealer's PID, containing the round number of the
+# Round message, the PlayerID of the Player, and the card that the Player has selected
+# to play for the round.
 #
 # The Dealer manages 10 rounds in this way.
 # 
@@ -64,7 +66,7 @@ defmodule Dealer do
   # Nat [List-of PlayerInfo] [Hash-of PlayerID [List-of Card]] [List-of Row] Scores [PID of DeclaredWinners] -> void
   defp play_round(round_no, players, hands, rows, scores, game_results_pid) do
     for {:player, name, pid} <- players do
-      send pid, {:round, Map.get(hands, name), rows, self()}
+      send pid, {:round, round_no, Map.get(hands, name), rows, self()}
     end
 
     moves = for _ <- 1..length(players) do
@@ -84,7 +86,7 @@ defmodule Dealer do
       Logging.log_winners(winner_s)
       send game_results_pid, {:declared_winners, winner_s}
     else
-      new_hands = Enum.reduce(moves, %{}, fn {:move, name, c}, new_hands ->
+      new_hands = Enum.reduce(moves, %{}, fn {:move, _no, name, c}, new_hands ->
         Map.put(new_hands, name, List.delete(Map.get(hands, name), c))
       end)
 
@@ -114,10 +116,10 @@ defmodule Player do
   # PlayerID PlayModule -> void
   defp play_round(name, play_procedure) do
     receive do
-      {:round, cards, rows, pid} -> 
+      {:round, round_no, cards, rows, pid} -> 
         selected_card = play_procedure.pick_card(rows, cards)
         Logging.log_player_decision(name, selected_card, cards)
-        send pid, {:move, name, selected_card}
+        send pid, {:move, round_no, name, selected_card}
     end
     play_round(name, play_procedure)
   end

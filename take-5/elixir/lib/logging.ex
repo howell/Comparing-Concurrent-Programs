@@ -8,8 +8,8 @@ defmodule Logging do
   end
 
   # Move -> void
-  def log_move({:move, name, card}) do
-    IO.puts "Player #{name} plays card #{inspect card}"
+  def log_move({:move, round_no, name, card}) do
+    IO.puts "Player #{name} plays card #{inspect card} in round #{round_no}"
   end
 
   # Scores -> void
