@@ -127,21 +127,21 @@
                 (hands (hash-update (hands) pid (λ (hand) (remove c hand))))))
 
           (on (asserted (later-than one-second-from-now))
-              (define players-that-voted
+              (define players-that-moved
                 (for/set ([move (moves)])
                          (match-define (played-in-round p _r _c) move)
                          p))
-              (log-elimination (set->list (set-subtract (players) players-that-voted)))
-              (players players-that-voted)
+              (log-elimination (set->list (set-subtract (players) players-that-moved)))
+              (players players-that-moved)
 
               (scores
                 (for/hash ([(pid score) (scores)]
-                           #:when (set-member? players-that-voted pid))
+                           #:when (set-member? players-that-moved pid))
                   (values pid score)))
 
               (hands
                 (for/hash ([(pid hand) (hands)]
-                           #:when (set-member? players-that-voted pid))
+                           #:when (set-member? players-that-moved pid))
                   (values pid hand))))
 
           (begin/dataflow

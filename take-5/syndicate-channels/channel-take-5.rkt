@@ -58,42 +58,92 @@
   (define game-result-chan (make-channel))
   (define moves-channel (make-channel))
 
+  (struct all-moves (moves) #:transparent)
+
   (define num-players (length players))
   (unless (and (>= num-players 2) (<= num-players 10))
     (error "Take-5 is played with 2-10 players"))
 
   ;; Runs all 10 rounds of the game and posts the winners to the game results channel
-  ;; [List-of Row] [Hash-of PlayerID Hand] [Hash-of PlayerID Score] -> void
-  (define (run-rounds rows hands scores)
+  ;; [List-of PlayerStruct] [List-of Row] [Hash-of PlayerID Hand] [Hash-of PlayerID Score] -> void
+  (define (run-rounds initial-players initial-rows initial-hands initial-scores)
+
+    (define (handle-moves round-number num-players dealer-chan)
+      (define send-moves-chan (make-channel))
+      (thread
+        (thunk
+          (define round-deadline (+ (current-inexact-milliseconds) 1000))
+          (define round-timeout (alarm-evt round-deadline))
+
+          (define (send-moves-to-dealer moves)
+            (channel-put dealer-chan (all-moves moves)))
+
+          ;; send timeout message here
+          (let loop ([moves '()])
+            (sync
+              (handle-evt
+                send-moves-chan
+                (match-lambda
+                  ;; TODO check equality on n?
+                  [(and m (played-in-round pid n c))
+                   (log-move m)
+                   (define new-moves (cons m moves))
+                   (if (= (length new-moves) num-players)
+                     (send-moves-to-dealer new-moves)
+                     (loop new-moves))]))
+              (handle-evt
+                round-timeout
+                (λ (_)
+                   (send-moves-to-dealer moves)))))))
+      send-moves-chan)
+
     ;; Loop once for each round
-    (let loop ([rows rows]
-               [hands hands]
-               [scores scores]
+    (let loop ([players initial-players]
+               [rows initial-rows]
+               [hands initial-hands]
+               [scores initial-scores]
                [round-count 1])
 
+      (define send-moves-chan (handle-moves round-count (length players) moves-channel))
+
+      ;; notify all players that they must move
       (for ([player players])
-        (channel-put (player-chan player)
-                     (round round-count (hash-ref hands (player-id player)) rows moves-channel)))
+        (thread
+          (thunk
+            (channel-put (player-chan player)
+                         (round round-count (hash-ref hands (player-id player)) rows send-moves-chan)))))
 
       ;; Get all moves for the round
       (define moves
-        (for/list ([_ (in-range num-players)])
-          (define m (channel-get moves-channel))
-          (log-move m)
-          m))
+        (match (channel-get moves-channel)
+          [(all-moves moves) moves]))
 
-      (define-values (new-rows new-scores) (play-round rows moves scores))
+      (define players-that-moved
+        (for/set ([m moves])
+          (played-in-round-player m)))
+
+      (define filtered-scores
+        (for/hash ([(pid score) (in-hash scores)]
+                   #:when (set-member? players-that-moved pid))
+          (values pid score)))
+
+      (define-values (new-rows new-scores) (play-round rows moves filtered-scores))
       (log-rows new-rows)
       (log-scores new-scores)
 
-      (define new-hands
-        (for/hash ([move moves])
-          (define pid (played-in-round-player move))
-          (values pid (remove (played-in-round-card move) (hash-ref hands pid)))))
-
       (cond
         [(< round-count 10)
-         (loop new-rows new-hands new-scores (+ round-count 1))]
+         (define new-hands
+           (for/hash ([move moves])
+             (define pid (played-in-round-player move))
+             (values pid (remove (played-in-round-card move) (hash-ref hands pid)))))
+
+         (define new-players
+           (for/list ([p players]
+                     #:when (set-member? players-that-moved (player-id p)))
+             p))
+
+         (loop new-players new-rows new-hands new-scores (+ round-count 1))]
         [else ;; Game is over, determine a winner
           (define winner/s (lowest-score/s new-scores))
           (log-winner/s winner/s)
@@ -112,7 +162,7 @@
 
       (log-rows starting-rows)
 
-      (run-rounds starting-rows initial-hands initial-scores)))
+      (run-rounds players starting-rows initial-hands initial-scores)))
   game-result-chan)
 
 ;; [List-of Symbol] -> [List-of PlayerStruct]
@@ -140,7 +190,17 @@
 
   (player pid round-chan))
 
-(define all-players (make-player* '(a b c d)))
+(define (make-inactive-player pid)
+  (define round-chan (make-channel))
+  (thread
+    (thunk
+      (let loop ()
+        (define round-info (channel-get round-chan))
+        (loop))))
+  (player pid round-chan))
+
+(define regular-players (make-player* '(a b c d)))
+(define all-players (cons (make-inactive-player 'mitch) regular-players))
 (define game-result-chan (make-dealer (shuffle the-deck) all-players))
 
 (channel-get game-result-chan)
