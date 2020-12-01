@@ -28,9 +28,6 @@
 (struct round-has-begun (number) #:transparent)
 ;; Round = (round-has-begun Nat) the Nat is between 1 and 10
 
-(struct game-board (rows) #:transparent)
-;; GameBoard = (game-board [List-of Row])
-
 ;; a GamePlayer is a function (Setof Card) Rows -> Card
 ;; that picks out a card to play based on a current state of the rows.
 
@@ -111,9 +108,10 @@
         (react
           (field [moves '()]
                  [hands initial-hands]
-                 [scores initial-scores]
-                 [has-voted (set)])
-          (assert (game-board rows))
+                 [scores initial-scores])
+
+          (for ([r rows])
+            (assert r))
 
           (for ([(pid hand) (in-hash (hands))])
             (assert (in-hand pid hand)))
@@ -126,21 +124,24 @@
 
                 (log-move m)
                 (moves (cons m (moves)))
-                (has-voted (set-add (has-voted) pid))
                 (hands (hash-update (hands) pid (λ (hand) (remove c hand))))))
 
           (on (asserted (later-than one-second-from-now))
-              (log-elimination (set->list (set-subtract (players) (has-voted))))
-              (players (has-voted))
+              (define players-that-voted
+                (for/set ([move (moves)])
+                         (match-define (played-in-round p _r _c) move)
+                         p))
+              (log-elimination (set->list (set-subtract (players) players-that-voted)))
+              (players players-that-voted)
 
               (scores
                 (for/hash ([(pid score) (scores)]
-                           #:when (set-member? (has-voted) pid))
+                           #:when (set-member? players-that-voted pid))
                   (values pid score)))
 
               (hands
                 (for/hash ([(pid hand) (hands)]
-                           #:when (set-member? (has-voted) pid))
+                           #:when (set-member? players-that-voted pid))
                   (values pid hand))))
 
           (begin/dataflow
@@ -194,7 +195,7 @@
 (define (spawn-player pid make-decision)
   (spawn #:name pid
          (define/query-value my-hand '() (in-hand pid $c) c)
-         (define/query-value the-rows '() (game-board $rows) rows)
+         (define/query-set the-rows (row $r) r)
          (on (asserted (round-has-begun $n))
              (let ([c (make-decision (my-hand) (set->list (the-rows)))])
                (log-player-decision pid c (my-hand))

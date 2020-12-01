@@ -60,23 +60,62 @@ defmodule Dealer do
   # [List-of PlayerInfo] [Hash-of PlayerID [List-of Card]] [List-of Row] Scores [PID of DeclaredWinners] -> void
   defp play_game(players, hands, rows, scores, game_results_pid) do
     Logging.log_rows(rows)
-    play_round(1, players, hands, rows, scores, game_results_pid)
+    start_round(1, players, hands, rows, scores, game_results_pid)
   end
 
   # Nat [List-of PlayerInfo] [Hash-of PlayerID [List-of Card]] [List-of Row] Scores [PID of DeclaredWinners] -> void
-  defp play_round(round_no, players, hands, rows, scores, game_results_pid) do
+  defp start_round(round_no, players, hands, rows, scores, game_results_pid) do
     for {:player, name, pid} <- players do
       send pid, {:round, round_no, Map.get(hands, name), rows, self()}
     end
+    # Send a timeout signal after one second
+    Process.send_after self(), :timeout, 1000
 
-    moves = for _ <- 1..length(players) do
-        receive do
-          m ->
-            Logging.log_move(m)
-            m
+    play_round([], round_no, players, hands, rows, scores, game_results_pid)
+  end
+
+  # [List-of Move] Nat [List-of PlayerInfo] [Hash-of PlayerID [List-of Card]] [List-of Row] Scores [PID of DeclaredWinners] -> void
+  defp play_round(moves, round_no, players, hands, rows, scores, game_results_pid) do
+    # Produce new hash containing entries with valid keys
+    # [Hash-of A Any] [Set-of A] -> [Hash-of A Any]
+    filter_keys = fn old_hash, valid_keys ->
+      Enum.reduce(old_hash, %{}, fn {key, val}, new_hash ->
+        if MapSet.member?(valid_keys, key) do
+          Map.put(new_hash, key, val)
+        else
+          new_hash
         end
+      end)
     end
 
+    receive do
+      :timeout ->
+        valid_players = MapSet.new(Enum.map(moves, fn {:move, _, name, _} -> name end))
+        new_hands = filter_keys.(hands, valid_players)
+        new_scores = filter_keys.(scores, valid_players)
+
+        conclude_round(
+          moves,
+          round_no,
+          MapSet.to_list(valid_players),
+          new_hands,
+          rows,
+          new_scores,
+          game_results_pid
+        )
+      m = {:move, ^round_no, _name, _c} ->
+        Logging.log_move(m)
+        new_moves = [m | moves]
+        if length(new_moves) == length(players) do
+          conclude_round(new_moves, round_no, players, hands, rows, scores, game_results_pid)
+        else
+          play_round(new_moves, round_no, players, hands, rows, scores, game_results_pid)
+        end
+    end
+  end
+
+  # [List-of Move] Nat [List-of PlayerInfo] [Hash-of PlayerID [List-of Card]] [List-of Row] Scores [PID of DeclaredWinners] -> void
+  defp conclude_round(moves, round_no, players, hands, rows, scores, game_results_pid) do
     {new_rows, new_scores} = Rules.play_round(rows, moves, scores)
     Logging.log_rows(new_rows)
     Logging.log_scores(new_scores)
@@ -90,7 +129,7 @@ defmodule Dealer do
         Map.put(new_hands, name, List.delete(Map.get(hands, name), c))
       end)
 
-      play_round(round_no + 1, players, new_hands, new_rows, new_scores, game_results_pid)
+      start_round(round_no + 1, players, new_hands, new_rows, new_scores, game_results_pid)
     end
   end
 end
