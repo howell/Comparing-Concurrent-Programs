@@ -93,7 +93,6 @@
   (define num-players (set-count all-player-ids))
   (unless (and (>= num-players 2) (<= num-players 10))
     (error "Take-5 is played with 2-10 players"))
-  (define initial-scores (for/hash ([pid (in-set all-player-ids)]) (values pid 0)))
   
   (let*-values ([(initial-hands deck) (deal all-player-ids deck)]
                 ;; you really seem to need a draw-four 
@@ -102,52 +101,50 @@
                 [(r3-start deck) (draw-one deck)]
                 [(r4-start _) (draw-one deck)])
     (spawn #:name 'dealer
-           (field (scores initial-scores)
-                  (hands initial-hands)
-                  (rows (game-board (list (row (list r1-start))
-                                          (row (list r2-start))
-                                          (row (list r3-start))
-                                          (row (list r4-start))))))
-           (log-rows (game-board-rows (rows)))
+      
+      ;; Nat [List-of Row] [Hash-of PID [List-of Card]] Scores -> void
+      (define (run-round current-round rows initial-hands scores)
+        (react
+          (field [moves '()]
+                 [hands initial-hands])
+          (assert (game-board rows))
 
-           (assert (rows))
+          (for ([(pid hand) (in-hash (hands))])
+            (assert (in-hand pid hand)))
 
-           (begin/dataflow
-             ;; not sure if there should be a reaction for each hand, or one reaction that asserts all hands
-             ;; TODO test if this works
-             (react
-               (for ([(pid hand) (in-hash (hands))])
-                 (assert (in-hand pid hand)))))
+          (assert (round-has-begun current-round))
 
-           (field (current-round 1))
-           (assert (round-has-begun (current-round)))
+          (for ([pid all-player-ids])
+            (on (asserted (played-in-round pid current-round $c))
+                (define m (played-in-round pid current-round c))
 
-           (field [moves '()])
-           (for ([pid all-player-ids])
-             (on (asserted (played-in-round pid (current-round) $c))
-                 (define m (played-in-round pid (current-round) c))
-                 
-                 (log-move m)
-                 
-                 (moves (cons m (moves)))
-                 (hands (hash-update (hands) pid (lambda (hand) (remove c hand))))
-                 (when (= num-players (length (moves)))
-                   ;; have all the moves, play some cards!
-                   (define-values (new-rows new-scores) (play-round (game-board-rows (rows)) (moves) (scores)))
-                   
-                   (log-rows new-rows)
-                   (log-scores new-scores)
-                   
-                   (rows (game-board new-rows))
-                   (scores new-scores)
-                   (cond
-                     [(< (current-round) 10) ;; start the next round
-                      (moves '())
-                      (current-round (add1 (current-round)))]
-                     [else ;; the game is over!
-                      (define winner/s (lowest-score/s (scores)))
-                      (log-winner/s winner/s)
-                      (stop-current-facet)])))))))
+                (log-move m)
+                (moves (cons m (moves)))
+                (hands (hash-update (hands) pid (λ (hand) (remove c hand))))))
+
+          ;; does this interact poorly with the for-loop above?
+          (begin/dataflow
+            (when (= num-players (length (moves)))
+              ;; have all the moves, play some cards!
+              (define-values (new-rows new-scores) (play-round rows (moves) scores))
+              (log-rows new-rows)
+              (log-scores new-scores)
+
+              (cond
+                [(< current-round 10)
+                 (stop-current-facet (run-round (add1 current-round) new-rows (hands) new-scores))]
+                [else ;; the game is over!
+                 (define winner/s (lowest-score/s new-scores))
+                 (log-winner/s winner/s)
+                 (stop-current-facet)])))))
+
+      (define initial-rows (list (row (list r1-start))
+                                 (row (list r2-start))
+                                 (row (list r3-start))
+                                 (row (list r4-start))))
+
+      (define initial-scores (for/hash ([pid (in-set all-player-ids)]) (values pid 0)))
+      (on-start (run-round 1 initial-rows initial-hands initial-scores)))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Player Agents, AI
