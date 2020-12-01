@@ -104,19 +104,21 @@
     (spawn #:name 'dealer
            (field (scores initial-scores)
                   (hands initial-hands)
-                  (rows (list (row (list r1-start))
-                              (row (list r2-start))
-                              (row (list r3-start))
-                              (row (list r4-start)))))
-           (log-rows (rows))
-           
-           ;; FIXME bug here as well
-           (for ([r (in-list (rows))])
-             (assert r))
-           ;; possibly need begin/dataflow?
-           ;; FIXME bug, hands don't get updated
-           (for ([(pid hand) (in-hash (hands))])
-             (assert (in-hand pid hand)))
+                  (rows (game-board (list (row (list r1-start))
+                                          (row (list r2-start))
+                                          (row (list r3-start))
+                                          (row (list r4-start))))))
+           (log-rows (game-board-rows (rows)))
+
+           (assert (rows))
+
+           (begin/dataflow
+             ;; not sure if there should be a reaction for each hand, or one reaction that asserts all hands
+             ;; TODO test if this works
+             (react
+               (for ([(pid hand) (in-hash (hands))])
+                 (assert (in-hand pid hand)))))
+
            (field (current-round 1))
            (assert (round-has-begun (current-round)))
 
@@ -131,12 +133,12 @@
                  (hands (hash-update (hands) pid (lambda (hand) (remove c hand))))
                  (when (= num-players (length (moves)))
                    ;; have all the moves, play some cards!
-                   (define-values (new-rows new-scores) (play-round (rows) (moves) (scores)))
+                   (define-values (new-rows new-scores) (play-round (game-board-rows (rows)) (moves) (scores)))
                    
                    (log-rows new-rows)
                    (log-scores new-scores)
                    
-                   (rows new-rows)
+                   (rows (game-board new-rows))
                    (scores new-scores)
                    (cond
                      [(< (current-round) 10) ;; start the next round
@@ -156,7 +158,7 @@
 ;; [Set PID] -> Void
 ;; spawn player agents 
 (define (spawn-player* players)
-  ;; Hand Rows -> PlayerAgent
+  ;; Hand [List-of Row] -> PlayerAgent
   ;; randomly pick a card in the hand
   (define (random-player hand rows)
     (random-ref hand))
@@ -168,7 +170,7 @@
 (define (spawn-player pid make-decision)
   (spawn #:name pid
          (define/query-value my-hand '() (in-hand pid $c) c)
-         (define/query-set the-rows (row $r) (row r))
+         (define/query-value the-rows '() (game-board $rows) rows)
          (on (asserted (round-has-begun $n))
              (let ([c (make-decision (my-hand) (set->list (the-rows)))])
                (log-player-decision pid c (my-hand))
