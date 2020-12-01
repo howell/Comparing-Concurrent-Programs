@@ -14,7 +14,10 @@
  log-winner/s
 
  ;; PlayerId Card (Listof Card) -> Void
- log-player-decision)
+ log-player-decision
+
+ ;; (Setof PlayerId) -> Void
+ log-elimination)
 
 ;; ---------------------------------------------------------------------------------------------------
 (require "rules.rkt")
@@ -34,6 +37,17 @@
 
 (define (log-player-decision pid c hand)
   (log-take-5-debug "~a chooses card ~v from hand ~v" pid c hand))
+
+;; should be able to abstract this with log-winner/s
+(define (log-elimination pids)
+  (cond
+    [(= 1 (length pids))
+     (log-take-5-debug "~a has been eliminated!" (first pids))]
+    [else
+      (define names (map symbol->string pids))
+      (log-take-5-debug (string-join names ", "
+                                     #:before-last " and "
+                                     #:after-last " have been eliminated!"))]))
 
 (define (log-scores scores)
   (log-take-5-debug "The current scores are:")

@@ -6,6 +6,8 @@
 (require (only-in racket/random random-ref random-sample))
 (require (only-in racket/sequence sequence-length))
 
+(require/activate syndicate/drivers/timestate)
+
 (require "deck.rkt")
 (require "rules.rkt")
 (require "logging.rkt")
@@ -101,12 +103,16 @@
                 [(r3-start deck) (draw-one deck)]
                 [(r4-start _) (draw-one deck)])
     (spawn #:name 'dealer
-      
+      (field [players all-player-ids])
       ;; Nat [List-of Row] [Hash-of PID [List-of Card]] Scores -> void
-      (define (run-round current-round rows initial-hands scores)
+      (define (run-round current-round rows initial-hands initial-scores)
+        (define one-second-from-now (+ (current-inexact-milliseconds) 1000))
+
         (react
           (field [moves '()]
-                 [hands initial-hands])
+                 [hands initial-hands]
+                 [scores initial-scores]
+                 [has-voted (set)])
           (assert (game-board rows))
 
           (for ([(pid hand) (in-hash (hands))])
@@ -114,19 +120,33 @@
 
           (assert (round-has-begun current-round))
 
-          (for ([pid all-player-ids])
+          (for ([pid (players)])
             (on (asserted (played-in-round pid current-round $c))
                 (define m (played-in-round pid current-round c))
 
                 (log-move m)
                 (moves (cons m (moves)))
+                (has-voted (set-add (has-voted) pid))
                 (hands (hash-update (hands) pid (λ (hand) (remove c hand))))))
 
-          ;; does this interact poorly with the for-loop above?
+          (on (asserted (later-than one-second-from-now))
+              (log-elimination (set->list (set-subtract (players) (has-voted))))
+              (players (has-voted))
+
+              (scores
+                (for/hash ([(pid score) (scores)]
+                           #:when (set-member? (has-voted) pid))
+                  (values pid score)))
+
+              (hands
+                (for/hash ([(pid hand) (hands)]
+                           #:when (set-member? (has-voted) pid))
+                  (values pid hand))))
+
           (begin/dataflow
-            (when (= num-players (length (moves)))
+            (when (= (set-count (players)) (length (moves)))
               ;; have all the moves, play some cards!
-              (define-values (new-rows new-scores) (play-round rows (moves) scores))
+              (define-values (new-rows new-scores) (play-round rows (moves) (scores)))
               (log-rows new-rows)
               (log-scores new-scores)
 
@@ -143,7 +163,7 @@
                                  (row (list r3-start))
                                  (row (list r4-start))))
 
-      (define initial-scores (for/hash ([pid (in-set all-player-ids)]) (values pid 0)))
+      (define initial-scores (for/hash ([pid (in-set (players))]) (values pid 0)))
       (on-start (run-round 1 initial-rows initial-hands initial-scores)))))
 
 ;; ---------------------------------------------------------------------------------------------------
@@ -163,6 +183,13 @@
   (for ([player (in-set players)])
     (spawn-player player random-player)))
 
+;; PID -> void
+(define (spawn-inactive-player pid)
+  (spawn #:name pid
+         (field [round-no -1])
+         (on (asserted (round-has-begun $n))
+             (round-no n))))
+
 ;; PlayerId GamePlayer -> PlayerAgent
 (define (spawn-player pid make-decision)
   (spawn #:name pid
@@ -176,14 +203,16 @@
 ;; ===================================================================================================
 ;; Test Game
 
-;; (module+ main 
+(define players
+  (set 'tony-the-tiger
+        'tucan-sam
+        'tophat-jones
+        'eyehole-man))
 
-  (define players
-    (set 'tony-the-tiger
-         'tucan-sam
-         'tophat-jones
-         'eyehole-man))
+(define inactive-player 'mitch)
 
-  (spawn-dealer (shuffle the-deck) players)
-  (spawn-player* players);)
+(spawn-dealer (shuffle the-deck) (set-add players inactive-player))
+(spawn-player* players)
+(spawn-inactive-player inactive-player)
+
 (module+ main )
