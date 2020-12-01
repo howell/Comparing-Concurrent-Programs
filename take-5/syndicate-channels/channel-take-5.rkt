@@ -95,7 +95,7 @@
         [(< round-count 10)
          (loop new-rows new-hands new-scores (+ round-count 1))]
         [else ;; Game is over, determine a winner
-          (define winner/s (lowest-score/s scores))
+          (define winner/s (lowest-score/s new-scores))
           (log-winner/s winner/s)
           (channel-put game-result-chan (declared-winner/s winner/s))])))
 
@@ -112,7 +112,8 @@
 
       (log-rows starting-rows)
 
-      (run-rounds starting-rows initial-hands initial-scores))))
+      (run-rounds starting-rows initial-hands initial-scores)))
+  game-result-chan)
 
 ;; [List-of Symbol] -> [List-of PlayerStruct]
 (define (make-player* players)
