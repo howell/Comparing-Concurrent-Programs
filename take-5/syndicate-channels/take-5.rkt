@@ -130,14 +130,14 @@
                  (log-winner/s winner/s)
                  (stop-current-facet)])))
 
-          (for ([pid (players)])
-            (on (asserted (played-in-round pid current-round $c))
-                (define m (played-in-round pid current-round c))
-
-                (log-move m)
-                (moves (cons m (moves)))
-                (hands (hash-update (hands) pid (λ (hand) (remove c hand))))
-                (conclude-round?)))
+          ;; ASSUME no player plays multiple cards
+          (on (asserted (played-in-round $pid current-round $c))
+              (define m (played-in-round pid current-round c))
+              
+              (log-move m)
+              (moves (cons m (moves)))
+              (hands (hash-update (hands) pid (λ (hand) (remove c hand))))
+              (conclude-round?))
 
           (on (asserted (later-than one-second-from-now))
               (define players-that-moved
