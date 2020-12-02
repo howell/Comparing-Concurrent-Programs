@@ -25,8 +25,8 @@
 (struct in-hand (player card) #:transparent)
 ;; InHand = (in-hand PlayerId Card)
 
-(struct round-has-begun (number) #:transparent)
-;; Round = (round-has-begun Nat) the Nat is between 1 and 10
+(struct round-has-begun (number rows) #:transparent)
+;; Round = (round-has-begun Nat [List-of Row]) the Nat is between 1 and 10
 
 ;; a GamePlayer is a function (Setof Card) Rows -> Card
 ;; that picks out a card to play based on a current state of the rows.
@@ -110,41 +110,12 @@
                  [hands initial-hands]
                  [scores initial-scores])
 
-          (for ([r rows])
-            (assert r))
-
           (for ([(pid hand) (in-hash (hands))])
             (assert (in-hand pid hand)))
 
-          (assert (round-has-begun current-round))
+          (assert (round-has-begun current-round rows))
 
-          (for ([pid (players)])
-            (on (asserted (played-in-round pid current-round $c))
-                (define m (played-in-round pid current-round c))
-
-                (log-move m)
-                (moves (cons m (moves)))
-                (hands (hash-update (hands) pid (λ (hand) (remove c hand))))))
-
-          (on (asserted (later-than one-second-from-now))
-              (define players-that-moved
-                (for/set ([move (moves)])
-                         (match-define (played-in-round p _r _c) move)
-                         p))
-              (log-elimination (set->list (set-subtract (players) players-that-moved)))
-              (players players-that-moved)
-
-              (scores
-                (for/hash ([(pid score) (scores)]
-                           #:when (set-member? players-that-moved pid))
-                  (values pid score)))
-
-              (hands
-                (for/hash ([(pid hand) (hands)]
-                           #:when (set-member? players-that-moved pid))
-                  (values pid hand))))
-
-          (begin/dataflow
+          (define (conclude-round?)
             (when (= (set-count (players)) (length (moves)))
               ;; have all the moves, play some cards!
               (define-values (new-rows new-scores) (play-round rows (moves) (scores)))
@@ -157,7 +128,33 @@
                 [else ;; the game is over!
                  (define winner/s (lowest-score/s new-scores))
                  (log-winner/s winner/s)
-                 (stop-current-facet)])))))
+                 (stop-current-facet)])))
+
+          (for ([pid (players)])
+            (on (asserted (played-in-round pid current-round $c))
+                (define m (played-in-round pid current-round c))
+
+                (log-move m)
+                (moves (cons m (moves)))
+                (hands (hash-update (hands) pid (λ (hand) (remove c hand))))
+                (conclude-round?)))
+
+          (on (asserted (later-than one-second-from-now))
+              (define players-that-moved
+                (for/set ([move (moves)])
+                         (match-define (played-in-round p _r _c) move)
+                         p))
+              (log-elimination (set->list (set-subtract (players) players-that-moved)))
+              (players players-that-moved)
+
+              (define (filter-keys h valid-keys)
+                (for/hash ([(key val) (in-hash h)]
+                           #:when (set-member? valid-keys key))
+                  (values key val)))
+
+              (scores (filter-keys (scores) players-that-moved))
+              (hands (filter-keys (hands) players-that-moved))
+              (conclude-round?))))
 
       (define initial-rows (list (row (list r1-start))
                                  (row (list r2-start))
@@ -173,31 +170,41 @@
 ;; it seems like there could be a race s.t. the player sees the start of a round
 ;; before their hand updates.
 
+;; Hand [List-of Row] -> PlayerAgent
+;; randomly pick a card in the hand
+(define (random-player hand rows)
+  (random-ref hand))
+
 ;; [Set PID] -> Void
-;; spawn player agents 
+;; spawn player agents that play randomly
 (define (spawn-player* players)
-  ;; Hand [List-of Row] -> PlayerAgent
-  ;; randomly pick a card in the hand
-  (define (random-player hand rows)
-    (random-ref hand))
-  ;; -- IN -- 
   (for ([player (in-set players)])
     (spawn-player player random-player)))
 
 ;; PID -> void
 (define (spawn-inactive-player pid)
   (spawn #:name pid
-         (field [round-no -1])
-         (on (asserted (round-has-begun $n))
-             (round-no n))))
+         (on (asserted (round-has-begun $n $rows))
+             #f)))
+
+(define (spawn-skipping-player pid make-decision skipping-round)
+  (spawn #:name pid
+         (define/query-value my-hand '() (in-hand pid $c) c)
+         (on (asserted (round-has-begun $n $rows))
+             (when (and (not (= skipping-round n))
+                        (not (empty? (my-hand))))
+               (printf "The round in question: ~a\n" n)
+               (printf "The cards in question: ~a\n" rows)
+               (let ([c (make-decision (my-hand) rows)])
+                 (log-player-decision pid c (my-hand))
+                 (assert! (played-in-round pid n c)))))))
 
 ;; PlayerId GamePlayer -> PlayerAgent
 (define (spawn-player pid make-decision)
   (spawn #:name pid
          (define/query-value my-hand '() (in-hand pid $c) c)
-         (define/query-set the-rows (row $r) r)
-         (on (asserted (round-has-begun $n))
-             (let ([c (make-decision (my-hand) (set->list (the-rows)))])
+         (on (asserted (round-has-begun $n $rows))
+             (let ([c (make-decision (my-hand) rows)])
                (log-player-decision pid c (my-hand))
                (assert! (played-in-round pid n c))))))
 
@@ -212,8 +219,11 @@
 
 (define inactive-player 'mitch)
 
-(spawn-dealer (shuffle the-deck) (set-add players inactive-player))
+(define sleepy-player 'matthias)
+
+(spawn-dealer (shuffle the-deck) (set-union players (set inactive-player sleepy-player)))
 (spawn-player* players)
 (spawn-inactive-player inactive-player)
+(spawn-skipping-player sleepy-player random-player 2)
 
 (module+ main )
