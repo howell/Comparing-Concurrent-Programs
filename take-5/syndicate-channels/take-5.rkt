@@ -193,8 +193,6 @@
          (on (asserted (round-has-begun $n $rows))
              (when (and (not (= skipping-round n))
                         (not (empty? (my-hand))))
-               (printf "The round in question: ~a\n" n)
-               (printf "The cards in question: ~a\n" rows)
                (let ([c (make-decision (my-hand) rows)])
                  (log-player-decision pid c (my-hand))
                  (assert! (played-in-round pid n c)))))))
