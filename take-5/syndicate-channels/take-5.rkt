@@ -16,17 +16,17 @@
 (module+ test (require rackunit))
 
 ;; ---------------------------------------------------------------------------------------------------
-;; PlayerId = Symbol
-;; Hand     = (Listof Card)
-;; Score    =  Nat
-;; Scores   = (Hashof PlayerId Score)
-;; Scores must contain an entry for each existing PlayerId (i.e. it is safe to use hash-update)
+;; a PlayerID is a Symbol
+;; a Hand is a [List-of Card]
+;; a Score is a Nat
+;; Scores is a [Hash-of PlayerID Score]
+;;  - Scores must contain an entry for each existing PlayerID (i.e. it is safe to use hash-update)
 
+;; an InHand is an (in-hand PlayerID Card)
 (struct in-hand (player card) #:transparent)
-;; InHand = (in-hand PlayerId Card)
 
+;; a Round is a (round-has-begun Nat [List-of Row]), whwere the Nat is between 1 and 10
 (struct round-has-begun (number rows) #:transparent)
-;; Round = (round-has-begun Nat [List-of Row]) the Nat is between 1 and 10
 
 ;; a GamePlayer is a function (Setof Card) Rows -> Card
 ;; that picks out a card to play based on a current state of the rows.
@@ -34,16 +34,18 @@
 ;; ===================================================================================================
 ;; Protocol
 
-;; the dealer asserts (in-hand PlayerId (Listof Card)) for each player
-;; the dealer asserts Rows representing the current state of the game
-;; the dealer asserts (round-has-begun Nat) to start each round
-;; to play a card during round n, each player asserts a Move with the current
-;; round number
+;; There is a conversation about playing a round in a game.
+;; The Dealer begins a new round of the game with a Round assertion, containing
+;; the round number and the current state of the rows. The Dealer also makes an
+;; InHand assertion for each player in the game, containing that player's PlayerID
+;; and the cards in their hand. Players respond with Move assertions, containing
+;; that player's PlayerID, the round in which they are making their move, and the
+;; card that they are choosing to play.
 
 ;; Invariants
 ;;
 ;; 1) No Takesies-Backsies: Once a player makes a move in a round, by asserting
-;; (plays PlayerId Round Nat Card), that player never asserts a different card
+;; (plays PlayerID Round Nat Card), that player never asserts a different card
 ;; for that round.
 ;; (plays-in-round pid r c1) && (plays-in-round pid r c2) ==> c1 == c2
 ;; or maybe
@@ -66,7 +68,7 @@
 ;; doesn't play a card multiple times).
 ;;
 ;; 5) No Impersonation
-;; Player actors only make assertions with their own PlayerId
+;; Player actors only make assertions with their own PlayerID
 ;;
 ;; 6) Timeliness
 ;; Players play a card in each round
@@ -87,7 +89,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; The Dealer
 
-;; Deck (Setof PlayerId) -> Dealer
+;; Deck (Setof PlayerID) -> Dealer
 (define (spawn-dealer deck all-player-ids)
   (define num-players (set-count all-player-ids))
   (unless (and (>= num-players 2) (<= num-players 10))
@@ -197,7 +199,7 @@
                  (log-player-decision pid c (my-hand))
                  (assert! (played-in-round pid n c)))))))
 
-;; PlayerId GamePlayer -> PlayerAgent
+;; PlayerID GamePlayer -> PlayerAgent
 (define (spawn-player pid make-decision)
   (spawn #:name pid
          (define/query-value my-hand '() (in-hand pid $c) c)

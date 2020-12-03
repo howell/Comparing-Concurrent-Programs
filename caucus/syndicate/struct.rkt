@@ -63,7 +63,8 @@
 ;; a plurality of the votes.
 
 ;; There are multiple bad actors.
-;; - Stubborn Candidate: a candidate who tries to re-enter the race after having been dropped --> could be implemented differently than the way I have it now
+;; - Stubborn Candidate: a candidate who tries to re-enter the race after having been dropped 
+;;     --> could be implemented differently than the way I have it now
 ;; - Greedy Voter: A voter that tries voting twice when possible.
 ;; - Stubborn Voter: A voter that always votes for the same candidate, even if that candidate isn't eligible.
 ;; - Late-Joining Voter: A voter who joins voting late (i.e. isn't available to vote for the first round).
