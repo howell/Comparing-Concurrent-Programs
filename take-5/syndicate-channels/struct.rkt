@@ -1,5 +1,21 @@
 #lang racket
 
+(provide
+  (struct-out row)
+  (struct-out played-in-round)
+  (struct-out card)
+  (struct-out ports)
+  (struct-out declare-player)
+  (struct-out move-request)
+
+  CONNECT-PORT
+  CONNECT-HOSTNAME
+
+  write-and-flush)
+
+(define CONNECT-PORT 8900)
+(define CONNECT-HOSTNAME "localhost")
+
 ;; ---------------------------------------------------------------------------------------------------
 ;; a PlayerID is a Symbol
 ;; a Hand is a [List-of Card]
@@ -8,11 +24,8 @@
 ;; Scores is a [Hash-of PlayerID Score]
 ;;  - Scores must contain an entry for each existing PlayerID (i.e. it is safe to use hash-update)
 
-(provide
-  (struct-out row)
-  (struct-out played-in-round)
-  (struct-out card)
-  (struct-out in-hand))
+;; a DeclarePlayer is a (declare-player PlayerID)
+(struct declare-player (id) #:prefab)
 
 ;; a Row is a (row [List-of Card]) where the length of the list is in [1, 5]
 (struct row (cards) #:prefab)
@@ -26,5 +39,15 @@
 ;; and the second Nat is the number of "bulls"
 (struct card (rank bulls) #:prefab) 
 
-;; an InHand is an (in-hand PlayerID Card)
-(struct in-hand (player card) #:transparent)
+;; a Ports is a (ports Port Port)
+(struct ports (input output) #:prefab)
+
+;; a MoveRequest is a (move-request RoundNumber Hand Rows)
+(struct move-request (round hand rows) #:prefab)
+
+;; a GamePlayer is a function [List-of Card] Rows -> Card
+
+;; Any Port -> void
+(define (write-and-flush contents port)
+  (write contents port)
+  (flush-output port))

@@ -1,13 +1,10 @@
 #lang racket
 
-(require [only-in racket/random random-ref])
 (require "deck.rkt")
 (require "deal.rkt")
 (require "logging.rkt")
 (require "rules.rkt")
 (require "struct.rkt")
-
-(provide (struct-out round))
 
 ;; a PlayerID is a Symbol
 ;; a Hand is a [List-of Card]
@@ -168,42 +165,55 @@
       (run-rounds players starting-rows initial-hands initial-scores)))
   game-result-chan)
 
-;; [List-of Symbol] -> [List-of PlayerStruct]
-(define (make-player* players)
-  ;; Hand [List-of Row] -> Card
-  (define (random-player hand rows)
-    (random-ref hand))
+(define (initialize-players listener)
+  (define (accept-connections)
+    (define accept-deadline (+ (current-inexact-milliseconds) 10000))
+    (define accept-timeout (alarm-evt accept-deadline))
 
-  (for/list ([player (in-list players)])
-    (make-player player random-player)))
+    (let loop ([connections '()])
+      (define accept-evt (tcp-accept-evt listener))
+      (sync
+        (handle-evt
+          accept-evt
+          (match-lambda
+            [(list input output)
+             (loop (cons (ports input output) connections))]))
+        (handle-evt 
+          accept-timeout
+          (λ (_) connections)))))
 
-;; PlayerID (Hand [List-of Row] -> Card) -> PlayerStruct
-(define (make-player pid make-decision)
+  (define connections (accept-connections))
+
+  (for/list ([conn connections])
+    (match-define (ports input output) conn)
+    (match (read input)
+      [(declare-player name)
+       (make-player name input output)])))
+
+(define (make-player name input-port output-port)
   (define round-chan (make-channel))
   (thread
     (thunk
       (let loop ()
         (define round-info (channel-get round-chan))
         (match round-info
+          ;; TODO need a `game-over` case
           [(round number hand rows move-chan)
-           (define player-decision (make-decision hand rows))
-           (log-player-decision pid player-decision hand)
-           (channel-put move-chan (played-in-round pid number player-decision))
-           (loop)]))))
+           (write-and-flush (move-request number hand rows) output-port)
+           (define move (read input-port))
+           (match move
+             [(played-in-round _ _ _)
+              (channel-put move-chan move)
+              (loop)])]))))
+  (player name round-chan))
 
-  (player pid round-chan))
+;; Initialize game
+(define server (tcp-listen CONNECT-PORT))
 
-(define (make-inactive-player pid)
-  (define round-chan (make-channel))
-  (thread
-    (thunk
-      (let loop ()
-        (define round-info (channel-get round-chan))
-        (loop))))
-  (player pid round-chan))
+(define players (initialize-players server))
 
-(define regular-players (make-player* '(a b c d)))
-(define all-players (cons (make-inactive-player 'mitch) regular-players))
-(define game-result-chan (make-dealer (shuffle the-deck) all-players))
+(define game-result-chan (make-dealer (shuffle the-deck) players))
 
 (channel-get game-result-chan)
+
+(custodian-shutdown-all (current-custodian))

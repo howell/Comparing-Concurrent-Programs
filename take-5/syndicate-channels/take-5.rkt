@@ -2,9 +2,6 @@
 
 (require racket/list)
 (require racket/set)
-(require (only-in racket/string string-join))
-(require (only-in racket/random random-ref random-sample))
-(require (only-in racket/sequence sequence-length))
 
 (require/activate syndicate/drivers/timestate)
 
@@ -18,6 +15,9 @@
 
 ;; a Round is a (round-has-begun Nat [List-of Row]), where the Nat is between 1 and 10
 (struct round-has-begun (number rows) #:transparent)
+
+;; an InHand is an (in-hand PlayerID Card)
+(struct in-hand (player card) #:transparent)
 
 ;; a GamePlayer is a function (Setof Card) Rows -> Card
 ;; that picks out a card to play based on a current state of the rows.
