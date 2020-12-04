@@ -1,6 +1,7 @@
 #lang racket
 
 (provide
+  ;; Structs
   (struct-out row)
   (struct-out played-in-round)
   (struct-out card)
@@ -8,13 +9,20 @@
   (struct-out declare-player)
   (struct-out move-request)
 
+  ;; Constants
   CONNECT-PORT
   CONNECT-HOSTNAME
+  CONN-DURATION
+  REGISTER-DURATION
 
-  write-and-flush)
+  ;; Functions
+  remove-tcp-buffer)
 
-(define CONNECT-PORT 8900)
-(define CONNECT-HOSTNAME "localhost")
+;; Constants
+(define CONNECT-PORT 8900) ;; the port number that the server listens to
+(define CONNECT-HOSTNAME "localhost") ;; the hostname of the server
+(define CONN-DURATION 20000) ;; the amount of time clients have to connect
+(define REGISTER-DURATION 1000) ;; the amount of time clients have to register
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; a PlayerID is a Symbol
@@ -39,15 +47,17 @@
 ;; and the second Nat is the number of "bulls"
 (struct card (rank bulls) #:prefab) 
 
+;; FIXME maybe this struct should be moved elsewhere?
 ;; a Ports is a (ports Port Port)
-(struct ports (input output) #:prefab)
+(struct ports (input output) #:transparent)
 
 ;; a MoveRequest is a (move-request RoundNumber Hand Rows)
 (struct move-request (round hand rows) #:prefab)
 
 ;; a GamePlayer is a function [List-of Card] Rows -> Card
 
-;; Any Port -> void
-(define (write-and-flush contents port)
-  (write contents port)
-  (flush-output port))
+;; remove buffer from TCP ports
+;; Port Port -> void
+(define (remove-tcp-buffer input output)
+  (file-stream-buffer-mode input 'none)
+  (file-stream-buffer-mode output 'none))

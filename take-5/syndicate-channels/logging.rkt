@@ -1,6 +1,12 @@
 #lang racket
 
 (provide
+ ;; -> Void
+ log-connection
+
+ ;; PlayerID -> Void
+ log-registration
+
  ;; Rows -> Void
  log-rows
 
@@ -27,6 +33,12 @@
 (define the-topic 'take-5)
 
 (define-logger take-5)
+
+(define (log-connection)
+  (log-take-5-debug "Client has connected!"))
+
+(define (log-registration id)
+  (log-take-5-debug "Player ~a has registered to play!" id))
 
 (define (log-move m)
   (match-define (played-in-round pid r c) m)

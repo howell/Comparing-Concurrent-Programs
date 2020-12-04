@@ -13,13 +13,13 @@
 ;; Scores must contain an entry for each existing PlayerID
 
 ;; a Round is a (round Nat [List-of Card] [List-of Row] [Chan-of Move])
-(struct round (number hand rows move-chan) #:prefab)
+(struct round (number hand rows move-chan) #:transparent)
 
 ;; a PlayerStruct is a (player PlayerID [Chan-of Round])
-(struct player (id chan) #:prefab)
+(struct player (id chan) #:transparent)
 
 ;; a DeclaredWinners is a (declared-winner/s [List-of PlayerID])
-(struct declared-winner/s (player/s) #:prefab)
+(struct declared-winner/s (player/s) #:transparent)
 
 ;;;;;;;;;;; Protocol ;;;;;;;;;;;;;;;
 
@@ -165,31 +165,41 @@
       (run-rounds players starting-rows initial-hands initial-scores)))
   game-result-chan)
 
+;; Listener -> [List-of Ports]
+(define (accept-connections listener)
+  (define accept-deadline (+ (current-inexact-milliseconds) CONN-DURATION))
+  (define accept-timeout (alarm-evt accept-deadline))
+
+  (let loop ([connections '()])
+    (define accept-evt (tcp-accept-evt listener))
+    (sync
+      (handle-evt
+        accept-evt
+        (match-lambda
+          [(list input output)
+           (log-connection)
+           (remove-tcp-buffer input output)
+           (loop (cons (ports input output) connections))]))
+      (handle-evt 
+        accept-timeout
+        (λ (_) connections)))))
+
+;; Listener -> [List-of PlayerStruct]
 (define (initialize-players listener)
-  (define (accept-connections)
-    (define accept-deadline (+ (current-inexact-milliseconds) 10000))
-    (define accept-timeout (alarm-evt accept-deadline))
+  (define connections (accept-connections listener))
 
-    (let loop ([connections '()])
-      (define accept-evt (tcp-accept-evt listener))
-      (sync
-        (handle-evt
-          accept-evt
-          (match-lambda
-            [(list input output)
-             (loop (cons (ports input output) connections))]))
-        (handle-evt 
-          accept-timeout
-          (λ (_) connections)))))
-
-  (define connections (accept-connections))
-
+  ;; TODO add some timeout here, not sure how to give everybody a chance
+  ;; loop through one at a time and see if they're ready to read?
+  ;; or, wait one second, then check which ones are ready to read and accept those
   (for/list ([conn connections])
     (match-define (ports input output) conn)
     (match (read input)
       [(declare-player name)
+       (log-registration name)
        (make-player name input output)])))
 
+;; Create a Player component that communicates with the client over TCP
+;; PlayerID Port Port -> PlayerStruct
 (define (make-player name input-port output-port)
   (define round-chan (make-channel))
   (thread
@@ -197,9 +207,8 @@
       (let loop ()
         (define round-info (channel-get round-chan))
         (match round-info
-          ;; TODO need a `game-over` case
           [(round number hand rows move-chan)
-           (write-and-flush (move-request number hand rows) output-port)
+           (write (move-request number hand rows) output-port)
            (define move (read input-port))
            (match move
              [(played-in-round _ _ _)
@@ -207,13 +216,14 @@
               (loop)])]))))
   (player name round-chan))
 
-;; Initialize game
-(define server (tcp-listen CONNECT-PORT))
+;; -> void
+(define (play-game)
+  (define server (tcp-listen CONNECT-PORT))
+  (define players (initialize-players server))
 
-(define players (initialize-players server))
+  (define game-result-chan (make-dealer (shuffle the-deck) players))
+  (channel-get game-result-chan)
 
-(define game-result-chan (make-dealer (shuffle the-deck) players))
+  (custodian-shutdown-all (current-custodian)))
 
-(channel-get game-result-chan)
-
-(custodian-shutdown-all (current-custodian))
+(play-game)
