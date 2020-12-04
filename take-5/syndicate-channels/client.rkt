@@ -33,9 +33,11 @@
        (let ([c (make-decision hand rows)])
          (write (played-in-round player-name number c) o)
          (loop))]
-      [eof
-        (close-input-port i)
-        (close-output-port o)])))
+      [(game-over winners)
+       (if (member player-name winners)
+         (printf "We won!\n")
+         (printf "We lost :(\n"))
+       (close-ports i o)])))
 
 ;; GamePlayer
 (define (random-player hand rows)

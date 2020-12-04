@@ -106,12 +106,19 @@
 
       (define send-moves-chan (handle-moves round-count (length players) moves-channel))
 
+      ;; Send a message to players in a separate thread
+      ;; (PlayerStruct -> Any) -> Void
+      (define (send-to-players msg-ctor)
+        (for ([player players])
+          (thread
+            (thunk
+              (channel-put (player-chan player)
+                           (msg-ctor player))))))
+
       ;; notify all players that they must move
-      (for ([player players])
-        (thread
-          (thunk
-            (channel-put (player-chan player)
-                         (round round-count (hash-ref hands (player-id player)) rows send-moves-chan)))))
+      (send-to-players
+        (λ (p)
+           (round round-count (hash-ref hands (player-id p)) rows send-moves-chan)))
 
       ;; Get all moves for the round
       (define moves
@@ -147,6 +154,7 @@
         [else ;; Game is over, determine a winner
           (define winner/s (lowest-score/s new-scores))
           (log-winner/s winner/s)
+          (send-to-players (λ (_) (game-over winner/s)))
           (channel-put game-result-chan (declared-winner/s winner/s))])))
 
   (thread
@@ -205,15 +213,18 @@
   (thread
     (thunk
       (let loop ()
-        (define round-info (channel-get round-chan))
-        (match round-info
+        (define dealer-msg (channel-get round-chan))
+        (match dealer-msg
           [(round number hand rows move-chan)
            (write (move-request number hand rows) output-port)
            (define move (read input-port))
            (match move
              [(played-in-round _ _ _)
               (channel-put move-chan move)
-              (loop)])]))))
+              (loop)])]
+          [(game-over _)
+           (write dealer-msg output-port)
+           (close-ports input-port output-port)]))))
   (player name round-chan))
 
 ;; -> void
@@ -224,6 +235,7 @@
   (define game-result-chan (make-dealer (shuffle the-deck) players))
   (channel-get game-result-chan)
 
-  (custodian-shutdown-all (current-custodian)))
+  (sleep 1)
+  (tcp-close server))
 
 (play-game)

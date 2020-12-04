@@ -8,6 +8,7 @@
   (struct-out ports)
   (struct-out declare-player)
   (struct-out move-request)
+  (struct-out game-over)
 
   ;; Constants
   CONNECT-PORT
@@ -16,7 +17,8 @@
   REGISTER-DURATION
 
   ;; Functions
-  remove-tcp-buffer)
+  remove-tcp-buffer
+  close-ports)
 
 ;; Constants
 (define CONNECT-PORT 8900) ;; the port number that the server listens to
@@ -54,10 +56,18 @@
 ;; a MoveRequest is a (move-request RoundNumber Hand Rows)
 (struct move-request (round hand rows) #:prefab)
 
+;; a GameOver is a (game-over [List-of PlayerID]) where the PlayerID is the ID of the winning player
+(struct game-over (winners) #:prefab)
+
 ;; a GamePlayer is a function [List-of Card] Rows -> Card
 
 ;; remove buffer from TCP ports
-;; Port Port -> void
+;; Port Port -> Void
 (define (remove-tcp-buffer input output)
   (file-stream-buffer-mode input 'none)
   (file-stream-buffer-mode output 'none))
+
+;; Port Port -> Void
+(define (close-ports input output)
+  (close-input-port input)
+  (close-output-port output))
