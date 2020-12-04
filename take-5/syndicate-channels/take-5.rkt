@@ -12,20 +12,11 @@
 (require "rules.rkt")
 (require "logging.rkt")
 (require "deal.rkt")
+(require "struct.rkt")
 
 (module+ test (require rackunit))
 
-;; ---------------------------------------------------------------------------------------------------
-;; a PlayerID is a Symbol
-;; a Hand is a [List-of Card]
-;; a Score is a Nat
-;; Scores is a [Hash-of PlayerID Score]
-;;  - Scores must contain an entry for each existing PlayerID (i.e. it is safe to use hash-update)
-
-;; an InHand is an (in-hand PlayerID Card)
-(struct in-hand (player card) #:transparent)
-
-;; a Round is a (round-has-begun Nat [List-of Row]), whwere the Nat is between 1 and 10
+;; a Round is a (round-has-begun Nat [List-of Row]), where the Nat is between 1 and 10
 (struct round-has-begun (number rows) #:transparent)
 
 ;; a GamePlayer is a function (Setof Card) Rows -> Card

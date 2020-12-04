@@ -5,6 +5,9 @@
 (require "deal.rkt")
 (require "logging.rkt")
 (require "rules.rkt")
+(require "struct.rkt")
+
+(provide (struct-out round))
 
 ;; a PlayerID is a Symbol
 ;; a Hand is a [List-of Card]
@@ -13,13 +16,13 @@
 ;; Scores must contain an entry for each existing PlayerID
 
 ;; a Round is a (round Nat [List-of Card] [List-of Row] [Chan-of Move])
-(struct round (number hand rows move-chan) #:transparent)
+(struct round (number hand rows move-chan) #:prefab)
 
 ;; a PlayerStruct is a (player PlayerID [Chan-of Round])
-(struct player (id chan) #:transparent)
+(struct player (id chan) #:prefab)
 
 ;; a DeclaredWinners is a (declared-winner/s [List-of PlayerID])
-(struct declared-winner/s (player/s) #:transparent)
+(struct declared-winner/s (player/s) #:prefab)
 
 ;;;;;;;;;;; Protocol ;;;;;;;;;;;;;;;
 
@@ -58,7 +61,7 @@
   (define game-result-chan (make-channel))
   (define moves-channel (make-channel))
 
-  (struct all-moves (moves) #:transparent)
+  (struct all-moves (moves) #:prefab)
 
   (define num-players (length players))
   (unless (and (>= num-players 2) (<= num-players 10))

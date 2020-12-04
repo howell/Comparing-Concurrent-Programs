@@ -1,10 +1,9 @@
 #lang racket
 
-(provide
- ;; a Card is a (card Nat Nat) where the first Nat is the value/rank of the card
- ;; and the second Nat is the amount of "bulls"
- (struct-out card)
+;; TODO maybe only require what you need?
+(require "struct.rkt")
 
+(provide
  ;; type Deck     = (Listof Card)
  ;; Deck 
  the-deck
@@ -21,7 +20,6 @@
 (require (only-in racket/random random-ref random-sample))
 
 ;; -----------------------------------------------------------------------------
-(struct card (rank bulls) #:transparent)
   
 (define (draw-one deck)
   (match deck

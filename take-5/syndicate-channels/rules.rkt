@@ -1,15 +1,8 @@
 #lang racket
 
+(require "struct.rkt")
+
 (provide
- (struct-out row)
- ;; Row = (row (Listof Card)) where the length of the list of cards is in [1,5]
- ;; SAM: kinda think rows should be stored in reverse
- ;; Rows = (Listof Row) of length four. ;; MF: why not use a vector here? 
-
- (struct-out played-in-round)
- ;; Move = (played-in-round PlayerId Nat Card)
-
- ;; Rows (Listof Move) Scores -> (Values Rows Score)
  play-round
 
  ;; Scores -> (NonemptyListof PlayerId)
@@ -23,10 +16,6 @@
 (module+ test (require rackunit))
 
 ;; ---------------------------------------------------------------------------------------------------
-(struct row (cards) #:transparent)
-  
-(struct played-in-round (player round card) #:transparent)
-
 (define (play-round rows moves scores)
   (define ordered-moves
     (sort moves
