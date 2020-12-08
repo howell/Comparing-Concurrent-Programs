@@ -211,7 +211,13 @@
           (on (message (tcp-in conn-id $b))
               (define msg (with-input-from-bytes b read))
               (match msg
-                [(declare-player $pid) (spawn-player pid)]))))
+                [(declare-player pid) (spawn-player pid)]
+                [(played-in-round pid round-no card)
+                 (send! (played-in-round pid round-no card))]))
+
+          ;; FIXME I don't like that input and output aren't symmetrically processed
+          (on (message (move-request $n $hand $rows))
+              (send! (tcp-out conn-id (move-request n hand rows))))))
 
 
 ;; ===================================================================================================
