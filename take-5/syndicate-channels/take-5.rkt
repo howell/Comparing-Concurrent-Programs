@@ -174,30 +174,45 @@
   (for ([player (in-set players)])
     (spawn-player player random-player)))
 
-;; PID -> void
-(define (spawn-inactive-player pid)
-  (spawn #:name pid
-         (on (asserted (round-has-begun $n $rows))
-             #f)))
+;; (define (spawn-server)
+;;   (during/spawn (tcp-connection $id (tcp-listener CONNECT-PORT))
+;;     (assert (tcp-accepted id))
 
-(define (spawn-skipping-player pid make-decision skipping-round)
-  (spawn #:name pid
-         (define/query-value my-hand '() (in-hand pid $c) c)
-         (on (asserted (round-has-begun $n $rows))
-             (when (and (not (= skipping-round n))
-                        (not (empty? (my-hand))))
-               (let ([c (make-decision (my-hand) rows)])
-                 (log-player-decision pid c (my-hand))
-                 (assert! (played-in-round pid n c)))))))
+;;     (field ([pid ""]))
+    
+;;     (define/query-value my-hand '() (in-hand pid $c) c)
 
-;; PlayerID GamePlayer -> PlayerAgent
-(define (spawn-player pid make-decision)
-  (spawn #:name pid
-         (define/query-value my-hand '() (in-hand pid $c) c)
-         (on (asserted (round-has-begun $n $rows))
-             (let ([c (make-decision (my-hand) rows)])
-               (log-player-decision pid c (my-hand))
-               (assert! (played-in-round pid n c))))))
+;;     (assert #:when (non-empty-string? (pid)) (player (pid)))
+
+;;     (on (message (tcp-in conn-id (declare-player $player-id)))
+;;         (pid player-id))
+
+;;     (on (asserted (round-has-begun $n $rows))
+;;         (send! (tcp-out conn-id (move-request n (my-hand) rows))))
+
+;;     (on (message (tcp-in conn-id (played-in-round pid n $c)))
+;;         ;; in theory could do something else
+;;         (send! (played-in-round pid n c)))))
+
+(define (spawn-player pid)
+  (define/query-value my-hand '() (in-hand pid $c) c)
+
+  (assert (player pid)))
+
+  
+
+
+;; How is this TCP translation layer going to work?
+;; - establish connections --> should that spawn a corresponding player? not quite
+(define (tcp-translator)
+  (during (tcp-connection $id (tcp-listener CONNECT-PORT))
+          (assert (tcp-accepted id))
+
+          (on (message (tcp-in conn-id $b))
+              (define msg (with-input-from-bytes b read))
+              (match msg
+                [(declare-player $pid) (spawn-player pid)]))))
+
 
 ;; ===================================================================================================
 ;; Test Game
