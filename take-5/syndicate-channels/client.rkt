@@ -25,6 +25,7 @@
   (remove-tcp-buffer i o)
 
   (write (declare-player player-name) o)
+  (flush-output o)
 
   (let loop ()
     (define contents (read i))
@@ -32,6 +33,7 @@
       [(move-request number hand rows)
        (let ([c (make-decision hand rows)])
          (write (played-in-round player-name number c) o)
+         (flush-output o)
          (loop))]
       [(game-over winners)
        (if (member player-name winners)

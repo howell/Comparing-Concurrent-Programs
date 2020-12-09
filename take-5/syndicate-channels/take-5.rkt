@@ -4,6 +4,9 @@
 (require racket/set)
 
 (require/activate syndicate/drivers/timestate)
+(require/activate syndicate/drivers/tcp2)
+
+(require [only-in racket/port with-input-from-bytes with-output-to-bytes])
 
 (require "deck.rkt")
 (require "rules.rkt")
@@ -19,11 +22,18 @@
 ;; an InHand is an (in-hand PlayerID Card)
 (struct in-hand (player card) #:transparent)
 
+;; a Player is a (player PlayerID)
+(struct player (id) #:transparent)
+
 ;; a GamePlayer is a function (Setof Card) Rows -> Card
 ;; that picks out a card to play based on a current state of the rows.
 
 ;; ===================================================================================================
 ;; Protocol
+
+;; There is a conversation about the players participating in the game.
+;; Players express interest in playing by making a Player assertion before
+;; the game is started by the Dealer.
 
 ;; There is a conversation about playing a round in a game.
 ;; The Dealer begins a new round of the game with a Round assertion, containing
@@ -80,82 +90,91 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; The Dealer
 
-;; Deck (Setof PlayerID) -> Dealer
-(define (spawn-dealer deck all-player-ids)
-  (define num-players (set-count all-player-ids))
-  (unless (and (>= num-players 2) (<= num-players 10))
-    (error "Take-5 is played with 2-10 players"))
+;; Deck -> Dealer
+(define (spawn-dealer deck)
+  (spawn #:name 'dealer
+    ;; Nat [Set-of PlayerID] [List-of Row] [Hash-of PID [List-of Card]] Scores -> void
+    (define (run-round current-round players rows initial-hands initial-scores)
+      (define one-second-from-now (+ (current-inexact-milliseconds) 1000))
+
+      (react
+        (field [hands initial-hands]
+               [moves '()])
+
+        (for ([(pid hand) (in-hash (hands))])
+          (assert (in-hand pid hand)))
+
+        (assert (round-has-begun current-round rows))
+
+        ;; Scores -> Void
+        (define (conclude-round? players curr-scores)
+          (when (= (set-count players) (length (moves)))
+            ;; have all the moves, play some cards!
+            (define-values (new-rows new-scores) (play-round rows (moves) curr-scores))
+            (log-rows new-rows)
+            (log-scores new-scores)
+
+            (cond
+              [(< current-round 10)
+               (stop-current-facet (run-round (add1 current-round) players new-rows (hands) new-scores))]
+              [else ;; the game is over!
+               (define winner/s (lowest-score/s new-scores))
+               (log-winner/s winner/s)
+               (stop-current-facet (react (on-start (send! (game-over winner/s)))))])))
+
+        ;; ASSUME no player plays multiple cards
+        (on (asserted (played-in-round $pid current-round $c))
+            (define m (played-in-round pid current-round c))
+            
+            (log-move m)
+            (moves (cons m (moves)))
+            (hands (hash-update (hands) pid (λ (hand) (remove c hand))))
+            (conclude-round? players initial-scores))
+
+        (on (asserted (later-than one-second-from-now))
+            (define players-that-moved
+              (for/set ([move (moves)])
+                       (match-define (played-in-round p _r _c) move)
+                       p))
+            (log-elimination (set->list (set-subtract players players-that-moved)))
+
+            (define (filter-keys h valid-keys)
+              (for/hash ([(key val) (in-hash h)]
+                         #:when (set-member? valid-keys key))
+                (values key val)))
+
+            (define filtered-hands (filter-keys (hands) players-that-moved))
+            (define filtered-scores (filter-keys initial-scores players-that-moved))
+
+            (hands filtered-hands)
+            (conclude-round? players-that-moved filtered-scores))))
+
+    (on-start
+      (react
   
-  (let*-values ([(initial-hands deck) (deal all-player-ids deck)]
-                ;; you really seem to need a draw-four 
-                [(r1-start deck) (draw-one deck)]
-                [(r2-start deck) (draw-one deck)]
-                [(r3-start deck) (draw-one deck)]
-                [(r4-start _) (draw-one deck)])
-    (spawn #:name 'dealer
-      (field [players all-player-ids])
-      ;; Nat [List-of Row] [Hash-of PID [List-of Card]] Scores -> void
-      (define (run-round current-round rows initial-hands initial-scores)
-        (define one-second-from-now (+ (current-inexact-milliseconds) 1000))
+        (define/query-set players (player $id) id)
 
-        (react
-          (field [moves '()]
-                 [hands initial-hands]
-                 [scores initial-scores])
+        (define registration-timeout (+ (current-inexact-milliseconds) CONN-DURATION))
 
-          (for ([(pid hand) (in-hash (hands))])
-            (assert (in-hand pid hand)))
+        (on (asserted (later-than registration-timeout))
+            (define num-players (set-count (players)))
+            (unless (and (>= num-players 2) (<= num-players 10))
+              (error "Take-5 is played with 2-10 players"))
 
-          (assert (round-has-begun current-round rows))
+            (let*-values ([(initial-hands deck) (deal (players) deck)]
+                          ;; you really seem to need a draw-four 
+                          [(r1-start deck) (draw-one deck)]
+                          [(r2-start deck) (draw-one deck)]
+                          [(r3-start deck) (draw-one deck)]
+                          [(r4-start _) (draw-one deck)])
 
-          (define (conclude-round?)
-            (when (= (set-count (players)) (length (moves)))
-              ;; have all the moves, play some cards!
-              (define-values (new-rows new-scores) (play-round rows (moves) (scores)))
-              (log-rows new-rows)
-              (log-scores new-scores)
+              (define initial-rows (list (row (list r1-start))
+                                         (row (list r2-start))
+                                         (row (list r3-start))
+                                         (row (list r4-start))))
 
-              (cond
-                [(< current-round 10)
-                 (stop-current-facet (run-round (add1 current-round) new-rows (hands) new-scores))]
-                [else ;; the game is over!
-                 (define winner/s (lowest-score/s new-scores))
-                 (log-winner/s winner/s)
-                 (stop-current-facet)])))
-
-          ;; ASSUME no player plays multiple cards
-          (on (asserted (played-in-round $pid current-round $c))
-              (define m (played-in-round pid current-round c))
-              
-              (log-move m)
-              (moves (cons m (moves)))
-              (hands (hash-update (hands) pid (λ (hand) (remove c hand))))
-              (conclude-round?))
-
-          (on (asserted (later-than one-second-from-now))
-              (define players-that-moved
-                (for/set ([move (moves)])
-                         (match-define (played-in-round p _r _c) move)
-                         p))
-              (log-elimination (set->list (set-subtract (players) players-that-moved)))
-              (players players-that-moved)
-
-              (define (filter-keys h valid-keys)
-                (for/hash ([(key val) (in-hash h)]
-                           #:when (set-member? valid-keys key))
-                  (values key val)))
-
-              (scores (filter-keys (scores) players-that-moved))
-              (hands (filter-keys (hands) players-that-moved))
-              (conclude-round?))))
-
-      (define initial-rows (list (row (list r1-start))
-                                 (row (list r2-start))
-                                 (row (list r3-start))
-                                 (row (list r4-start))))
-
-      (define initial-scores (for/hash ([pid (in-set (players))]) (values pid 0)))
-      (on-start (run-round 1 initial-rows initial-hands initial-scores)))))
+              (define initial-scores (for/hash ([pid (in-set (players))]) (values pid 0)))
+              (run-round 1 (players) initial-rows initial-hands initial-scores)))))))
 
 ;; ---------------------------------------------------------------------------------------------------
 ;; Player Agents, AI
@@ -163,79 +182,56 @@
 ;; it seems like there could be a race s.t. the player sees the start of a round
 ;; before their hand updates.
 
-;; Hand [List-of Row] -> PlayerAgent
-;; randomly pick a card in the hand
-(define (random-player hand rows)
-  (random-ref hand))
-
-;; [Set PID] -> Void
-;; spawn player agents that play randomly
-(define (spawn-player* players)
-  (for ([player (in-set players)])
-    (spawn-player player random-player)))
-
-;; (define (spawn-server)
-;;   (during/spawn (tcp-connection $id (tcp-listener CONNECT-PORT))
-;;     (assert (tcp-accepted id))
-
-;;     (field ([pid ""]))
-    
-;;     (define/query-value my-hand '() (in-hand pid $c) c)
-
-;;     (assert #:when (non-empty-string? (pid)) (player (pid)))
-
-;;     (on (message (tcp-in conn-id (declare-player $player-id)))
-;;         (pid player-id))
-
-;;     (on (asserted (round-has-begun $n $rows))
-;;         (send! (tcp-out conn-id (move-request n (my-hand) rows))))
-
-;;     (on (message (tcp-in conn-id (played-in-round pid n $c)))
-;;         ;; in theory could do something else
-;;         (send! (played-in-round pid n c)))))
-
 (define (spawn-player pid)
-  (define/query-value my-hand '() (in-hand pid $c) c)
+  (spawn
+    (define/query-value my-hand '() (in-hand pid $c) c)
 
-  (assert (player pid)))
+    (assert (player pid))
 
-  
+    (during (round-has-begun $n $rows)
+            (on-start (send! (move-request n (my-hand) rows)))
+            (on (message (played-in-round pid n $card))
+                (react (assert (played-in-round pid n card)))))))
 
+;; Execute and ferry commands between clients and player components
+;; -> Void
+(define (spawn-tcp-translator)
+  ;; Readable/Writable -> Bytes
+  (define (convert-msg-to-bytes msg)
+    (with-output-to-bytes
+      (λ () (write msg) (flush-output))))
 
-;; How is this TCP translation layer going to work?
-;; - establish connections --> should that spawn a corresponding player? not quite
-(define (tcp-translator)
-  (during (tcp-connection $id (tcp-listener CONNECT-PORT))
-          (assert (tcp-accepted id))
+  (spawn
+    (on-stop (printf "That's the whole shebang!\n"))
+    (during/spawn (tcp-connection $conn-id (tcp-listener CONNECT-PORT))
+            (on-stop (printf "That's one down!\n"))
+            (assert (tcp-accepted conn-id))
 
-          (on (message (tcp-in conn-id $b))
-              (define msg (with-input-from-bytes b read))
-              (match msg
-                [(declare-player pid) (spawn-player pid)]
-                [(played-in-round pid round-no card)
-                 (send! (played-in-round pid round-no card))]))
+            (on (message (tcp-in conn-id $bs))
+                (define msg (with-input-from-bytes bs read))
+                (match msg
+                  [(declare-player pid) (spawn-player pid)]
+                  [(played-in-round pid round-no card)
+                   (send! (played-in-round pid round-no card))]))
 
-          ;; FIXME I don't like that input and output aren't symmetrically processed
-          (on (message (move-request $n $hand $rows))
-              (send! (tcp-out conn-id (move-request n hand rows))))))
+            ;; FIXME I don't like that input and output aren't symmetrically processed
+            (on (message (move-request $n $hand $rows))
+                (define bs (convert-msg-to-bytes (move-request n hand rows)))
+                (send! (tcp-out conn-id bs)))
+
+            (on (message (game-over $ws))
+                (send! (tcp-out conn-id (convert-msg-to-bytes (game-over ws))))
+                (stop-current-facet)))
+
+    (on (message (game-over $ws))
+        (stop-current-facet))))
 
 
 ;; ===================================================================================================
 ;; Test Game
 
-(define players
-  (set 'tony-the-tiger
-        'tucan-sam
-        'tophat-jones
-        'eyehole-man))
 
-(define inactive-player 'mitch)
-
-(define sleepy-player 'matthias)
-
-(spawn-dealer (shuffle the-deck) (set-union players (set inactive-player sleepy-player)))
-(spawn-player* players)
-(spawn-inactive-player inactive-player)
-(spawn-skipping-player sleepy-player random-player 2)
+(spawn-dealer (shuffle the-deck))
+(spawn-tcp-translator)
 
 (module+ main )

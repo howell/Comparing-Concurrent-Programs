@@ -54,6 +54,8 @@
 ;; should be able to abstract this with log-winner/s
 (define (log-elimination pids)
   (cond
+    [(= 0 (length pids))
+     (log-take-5-debug "No one has been eliminated!")]
     [(= 1 (length pids))
      (log-take-5-debug "~a has been eliminated!" (first pids))]
     [else
