@@ -106,7 +106,7 @@
 
         (assert (round-has-begun current-round rows))
 
-        ;; Scores -> Void
+        ;; [List-of PlayerID] Scores -> Void
         (define (conclude-round? players curr-scores)
           (when (= (set-count players) (length (moves)))
             ;; have all the moves, play some cards!
