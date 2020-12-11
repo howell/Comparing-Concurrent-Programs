@@ -209,16 +209,3 @@ defmodule PlayerServer do
   end
 end
 
-####### PlayModules #######
-# a PlayModule describes how a player will choose a card in a round of the game.
-#
-# a PlayModule is a module that contains a function pick_card/2 with the signature:
-# - [List-of Row] [List-of Card] -> Card
-
-# a PlayModule that randomly selects a card to play
-# defmodule RandomPlay do
-#   # [List-of Row] [List-of Card] -> Card
-#   def pick_card(_rows, hand) do
-#     Enum.random(hand)
-#   end
-# end
