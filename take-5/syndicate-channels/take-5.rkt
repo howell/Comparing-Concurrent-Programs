@@ -5,6 +5,7 @@
 
 (require/activate syndicate/drivers/timestate)
 (require/activate syndicate/drivers/tcp2)
+(require/activate "../../tcp2-datum.rkt")
 
 (require [only-in racket/port with-input-from-bytes with-output-to-bytes])
 
@@ -198,18 +199,15 @@
 (define (spawn-tcp-translator)
   ;; Readable/Writable -> Bytes
   (define (convert-msg-to-bytes msg)
-    (with-output-to-bytes
-      (λ () (write msg) (flush-output))))
+    (with-output-to-bytes 
+      (λ () (write msg))))
 
   (spawn
-    (on-stop (printf "That's the whole shebang!\n"))
     (during/spawn (tcp-connection $conn-id (tcp-listener CONNECT-PORT))
-            (on-stop (printf "That's one down!\n"))
             (assert (tcp-accepted conn-id))
 
-            (on (message (tcp-in conn-id $bs))
-                (define msg (with-input-from-bytes bs read))
-                (match msg
+            (on (message (tcp-in-datum conn-id $v))
+                (match v
                   [(declare-player pid) (spawn-player pid)]
                   [(played-in-round pid round-no card)
                    (send! (played-in-round pid round-no card))]))

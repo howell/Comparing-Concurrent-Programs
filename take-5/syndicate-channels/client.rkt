@@ -23,9 +23,10 @@
 (define (create-client player-name make-decision)
   (define-values (i o) (create-connection))
   (remove-tcp-buffer i o)
+  
+  (sleep 1) ;; FIXME race due to spawning reader thread for syndicate driver
 
   (write (declare-player player-name) o)
-  (flush-output o)
 
   (let loop ()
     (define contents (read i))
@@ -33,7 +34,6 @@
       [(move-request number hand rows)
        (let ([c (make-decision hand rows)])
          (write (played-in-round player-name number c) o)
-         (flush-output o)
          (loop))]
       [(game-over winners)
        (if (member player-name winners)

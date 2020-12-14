@@ -64,8 +64,8 @@
 ;; remove buffer from TCP ports
 ;; Port Port -> Void
 (define (remove-tcp-buffer input output)
-  #;(file-stream-buffer-mode input 'none)
-  #;(file-stream-buffer-mode output 'none)
+  (file-stream-buffer-mode input 'none)
+  (file-stream-buffer-mode output 'none)
   #f)
 
 ;; Port Port -> Void
