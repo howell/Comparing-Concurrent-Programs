@@ -1,21 +1,34 @@
+# The Protocol
+# 
+# Clients send a Player message upon connection
+# Clients receive a Round message, and reply with a Move message
+
 defmodule Client do
   def init(name, play_module) do
-    {:ok, socket} = :gen_tcp.connect('localhost', 8900, [active: false])
+    {:ok, socket} = :gen_tcp.connect('localhost', 8900, [active: true])
     register_player(socket, name)
     loop(socket, name, play_module)
   end
 
   defp register_player(socket, name) do
-    :gen_tcp.send(socket, {:player, name})
+    :gen_tcp.send(socket, Poison.encode!(%{"player" => name}))
   end
 
   defp loop(socket, name, play_module) do
-    case :gen_tcp.recv(socket, 0) do
-      # FIXME don't need the PID? maybe a MoveRequest struct should be introduced
-      {:ok, {:round, round_no, cards, rows, pid}} ->
+    {:ok, msg} = :gen_tcp.recv(socket, 0)
+
+    case Poison.decode!(msg) do
+      %{"round" => r, "hand" => cards, "rows" => rows} ->
         selected_card = play_module.pick_card(rows, cards)
-        :gen_tcp.send(socket, {:move, round_no, name, selected_card})
+        :gen_tcp.send(socket, Poison.encode!(%{"player" => name, "round" => r, "play" => selected_card}))
         loop(socket, name, play_module)
+
+      %{"winners" => names} ->
+        if Enum.member?(names, name) do
+          IO.puts "We won!"
+        else
+          IO.puts "We lost :("
+        end
     end
   end
 end
