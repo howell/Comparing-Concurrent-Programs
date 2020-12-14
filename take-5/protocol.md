@@ -21,6 +21,7 @@ A Row is a:
 A MoveRequest is a:
 ```json
 {
+  "round": "number",
   "hand": ["card"],
   "rows": ["row"]
 }
@@ -29,6 +30,8 @@ A MoveRequest is a:
 A Move is a:
 ```json
 {
+  "player": "string",
+  "round": "number",
   "play": "card"
 }
 ```
