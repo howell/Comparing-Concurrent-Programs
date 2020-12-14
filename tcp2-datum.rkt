@@ -31,5 +31,4 @@
     (on (message (tcp-in id $bs))
         (write-bytes bs out))
     (on (message (inbound (tcp-in-datum id $v)))
-        (printf "Value: ~a\n" v)
         (send! (tcp-in-datum id v)))))
