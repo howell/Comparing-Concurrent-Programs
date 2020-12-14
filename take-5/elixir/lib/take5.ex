@@ -134,36 +134,6 @@ defmodule Dealer do
   end
 end
 
-# Players that play the game
-# defmodule Player do
-#   # Spawn multiple players with the same card selection procedure
-#   # [List-of PlayerID] PlayModule -> [List-of PlayerInfo]
-#   def create_players(names, play_procedure) do
-#     for name <- names do
-#       create_player(name, play_procedure)
-#     end
-#   end
-
-#   # Spawn one player with the given card selection procedure
-#   # PlayerID PlayModule -> PlayerInfo
-#   def create_player(name, play_procedure) do
-#     pid = spawn fn -> play_round(name, play_procedure) end
-#     {:player, name, pid}
-#   end
-
-#   # Receive a request to play a card for a round and pick one to play
-#   # PlayerID PlayModule -> void
-#   defp play_round(name, play_procedure) do
-#     receive do
-#       {:round, round_no, cards, rows, pid} -> 
-#         selected_card = play_procedure.pick_card(rows, cards)
-#         Logging.log_player_decision(name, selected_card, cards)
-#         send pid, {:move, round_no, name, selected_card}
-#     end
-#     play_round(name, play_procedure)
-#   end
-# end
-
 defmodule Player do
   def spawn(client, dealer) do
     spawn fn ->
@@ -173,21 +143,24 @@ defmodule Player do
   end
 
   defp register_player(client, dealer) do
-    case :gen_tcp.recv(client, 0) do
-      {:ok, msg = {:player, name}} ->
-        send dealer, msg
+    {:ok, msg} = :gen_tcp.recv(client, 0)
+    case Translator.parse(Poison.decode!(msg)) do
+      player = {:player, name} ->
+        send dealer, player
         name
     end
   end
 
   defp loop(name, client, dealer) do
     receive do
-      round = {:round, round_no, _cards, _rows, _pid} ->
-        :gen_tcp.send(client, round)
+      {:round, round_no, cards, rows} ->
+        move_request = {:move_request, round_no, cards, rows}
+        :gen_tcp.send(client, Poison.encode!(Translator.unparse(move_request)))
 
-        case :gen_tcp.recv(client, 0) do
-          {:ok, move = {:move, ^round_no, ^name, _card}} ->
-            send dealer, move
+        {:ok, msg} = :gen_tcp.recv(client, 0)
+        case Translator.parse(Poison.decode!(msg)) do
+          m = {:move, ^round_no, ^name, _c} ->
+            send dealer, m
             loop(name, client, dealer)
         end
     end
@@ -197,8 +170,10 @@ end
 
 defmodule PlayerServer do
   def spawn(port, dealer) do
-    {:ok, socket} = :gen_tcp.listen(port, [:binary, packet: :line, active: false, reuseaddr: true])
-    loop(socket, dealer)
+    spawn fn ->
+      {:ok, socket} = :gen_tcp.listen(port, [:binary, packet: :line, active: false, reuseaddr: true])
+      loop(socket, dealer)
+    end
   end
 
   defp loop(socket, dealer) do
