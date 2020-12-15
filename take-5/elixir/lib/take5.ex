@@ -233,40 +233,18 @@ defmodule Player do
 end
 
 defmodule PlayerServer do
-  def spawn(port) do
-    spawn fn ->
-      # FIXME What're these options for?
-      {:ok, socket} = :gen_tcp.listen(port, [:binary, packet: :line, active: false, reuseaddr: true])
-      loop(socket)
-    end
+  def create(port) do
+    {:ok, socket} = :gen_tcp.listen(port, [:binary, packet: :line, active: false, reauseaddr: true])
+    loop(socket)
   end
 
   defp loop(socket) do
     {:ok, client} = :gen_tcp.accept(socket)
-    
-
-    # FIXME if we're doing things this way, probably don't need a spawn in player
-    {:ok, pid} = Task.Supervisor.start_child(Player.TaskSupervisor, fn -> Player.spawn(client, dealer) end)
+    {:ok, pid} = Task.Supervisor.start_child(Player.TaskSupervisor, fn -> Player.create(client) end)
     :ok = :gen_tcp.controlling_process(client, pid)
-    loop(socket, dealer)
+    loop(socket)
   end
 end
-
-# defmodule Take5.Supervisor do
-#   use Supervisor
-
-#   def start_link(opts) do
-#     Supervisor.start_link(__MODULE__, :ok, opts)
-#   end
-
-#   def init(:ok) do
-#     children = [
-#       PlayerServer
-#     ]
-
-#     Supervisor.init(children, strategy: :one_for_one)
-#   end
-# end
 
 defmodule Take5 do
   use Application
@@ -274,7 +252,8 @@ defmodule Take5 do
   def start(_type, _args) do
     children = [
       {Dealer, name: Take5.Dealer},
-      {PlayerServer, [8900]}
+      {Task.Supervisor, name: Player.TaskSupervisor},
+      Supervisor.child_spec({Task, fn -> PlayerServer.create(8900) end}, restart: :permanent)
     ]
 
     opts = [strategy: :one_for_one, name: Take5.Supervisor]
