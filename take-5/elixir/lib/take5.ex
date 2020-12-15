@@ -57,6 +57,8 @@ defmodule RoundHandler do
     new_moves = [m | moves]
     if length(new_moves) == length(players) do
       conclude_round(state)
+    else
+      {:noreply, %{round_no: round_no, players: players, moves: new_moves}}
     end
   end
 
@@ -68,10 +70,10 @@ defmodule RoundHandler do
     Process.send_after self(), :timeout, 1000
   end
 
-  defp conclude_round(%{round_no: n, players: _p, moves: m}) do
-    Take5.Dealer.end_round(n, m)
+  defp conclude_round(s = %{round_no: n, players: _p, moves: m}) do
+    Dealer.end_round(Take5.Dealer, n, m)
     # NOTE I think this works
-    {:stop, :normal}
+    {:stop, :normal, s}
   end
 end
 
@@ -101,7 +103,6 @@ defmodule Dealer do
 
   # Server API
 
-  # TODO add game state here?
   def handle_call({:register, p}, s = %{reg_closed: r, players: players, curr_round: round_no, game_state: g}) do
     if r do
       {:reply, {:error, :closed}, s}
@@ -209,22 +210,23 @@ defmodule Player do
   defp register_player(client) do
     {:ok, msg} = :gen_tcp.recv(client, 0)
     case Translator.parse(Poison.decode!(msg)) do
-      player = {:player, name} ->
-        send Take5.Dealer, player
+      {:player, name} ->
+        player = {:player, name, self()}
+        Dealer.register(Take5.Dealer, player)
         name
     end
   end
 
   defp loop(name, client) do
     receive do
-      {:round, round_no, cards, rows} ->
+      {:round, round_no, cards, rows, pid} ->
         move_request = {:move_request, round_no, cards, rows}
         :gen_tcp.send(client, Poison.encode!(Translator.unparse(move_request)))
 
         {:ok, msg} = :gen_tcp.recv(client, 0)
         case Translator.parse(Poison.decode!(msg)) do
           m = {:move, ^round_no, ^name, _c} ->
-            send Take5.Dealer, m
+            send pid, m
             loop(name, client)
         end
     end
