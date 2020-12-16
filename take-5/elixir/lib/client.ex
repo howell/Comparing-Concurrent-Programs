@@ -5,17 +5,22 @@
 
 defmodule Client do
   def init(name, play_module) do
-    {:ok, socket} = :gen_tcp.connect('localhost', 8900, [active: true])
+    {:ok, socket} = :gen_tcp.connect('localhost', 8900, [:binary, packet: :line, active: false, reuseaddr: true])
+    Process.sleep(1000)
     register_player(socket, name)
     loop(socket, name, play_module)
   end
 
   defp register_player(socket, name) do
+    IO.puts inspect(socket)
     :gen_tcp.send(socket, Poison.encode!(%{"player" => name}))
+    IO.puts "banana"
   end
 
   defp loop(socket, name, play_module) do
+    IO.puts "WOW"
     {:ok, msg} = :gen_tcp.recv(socket, 0)
+    IO.puts "GASP"
 
     case Poison.decode!(msg) do
       %{"round" => r, "hand" => cards, "rows" => rows} ->

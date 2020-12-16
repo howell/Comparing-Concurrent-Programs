@@ -72,7 +72,6 @@ defmodule RoundHandler do
 
   defp conclude_round(s = %{round_no: n, players: _p, moves: m}) do
     Dealer.end_round(Take5.Dealer, n, m)
-    # NOTE I think this works
     {:stop, :normal, s}
   end
 end
@@ -98,7 +97,7 @@ defmodule Dealer do
   end
 
   def end_round(server, round_no, moves) do
-    GenServer.call(server, {:end_round, round_no, moves})
+    GenServer.cast(server, {:end_round, round_no, moves})
   end
 
   # Server API
@@ -111,23 +110,11 @@ defmodule Dealer do
     end
   end
 
-  # TODO should this be a `cast` instead of a `call`?
-  def handle_call(
+  def handle_cast(
     {:end_round, round_no, moves},
     %{round_no: round_no, reg_closed: true, players: players, game_state: game_state}
   ) do
-    # TODO play_round helper function?
-    %GameState{hands: hands, rows: rows, scores: scores} = game_state
-
-    moved_player_names = MapSet.new(Enum.map(moves, fn {:move, _no, name, _c} -> name end))
-    players_that_moved = Enum.filter(players, fn {:player, name, _} -> MapSet.member?(moved_player_names, name) end)
-
-    filtered_scores = filter_keys(scores, moved_player_names)
-
-    {new_rows, new_scores} = Rules.play_round(rows, moves, filtered_scores)
-
-    Logging.log_rows(new_rows)
-    Logging.log_scores(new_scores)
+    {players_that_moved, new_gs = %GameState{hands: _, rows: _, scores: new_scores}} = calculate_results(players, moves, game_state)
 
     if round_no == 10 do
       winner_s = Rules.lowest_scores(new_scores)
@@ -135,15 +122,9 @@ defmodule Dealer do
       IO.puts "Winners! #{inspect winner_s}"
       {:stop, :normal}
     else
-      new_hands = Enum.reduce(moves, %{}, fn {:move, _no, name, c}, new_hands ->
-        Map.put(new_hands, name, List.delete(Map.get(hands, name), c))
-      end)
-
       new_round_no = round_no + 1
-
-      new_game_state = %GameState{hands: new_hands, rows: new_rows, scores: new_scores}
-      start_round(new_round_no, players_that_moved, new_game_state)
-      {:reply, :ok, %{round_no: new_round_no, players: players_that_moved, reg_closed: true, game_state: new_game_state}}
+      start_round(new_round_no, players_that_moved, new_gs)
+      {:noreply, %{round_no: new_round_no, players: players_that_moved, reg_closed: true, game_state: new_gs}}
     end
   end
 
@@ -162,7 +143,7 @@ defmodule Dealer do
   ## Helper Functions
 
   defp open_registration do
-    Process.send_after self(), :start_game, 20_000
+    Process.send_after self(), :start_game, 1_000_000
   end
 
   defp initialize_game(players) do
@@ -197,6 +178,24 @@ defmodule Dealer do
       end
     end)
   end
+
+  defp calculate_results(players, moves, %GameState{hands: hands, rows: rows, scores: scores}) do
+    moved_player_names = MapSet.new(Enum.map(moves, fn {:move, _no, name, _c} -> name end))
+    players_that_moved = Enum.filter(players, fn {:player, name, _} -> MapSet.member?(moved_player_names, name) end)
+
+    filtered_scores = filter_keys(scores, moved_player_names)
+
+    {new_rows, new_scores} = Rules.play_round(rows, moves, filtered_scores)
+
+    Logging.log_rows(new_rows)
+    Logging.log_scores(new_scores)
+
+    new_hands = Enum.reduce(moves, %{}, fn {:move, _no, name, c}, new_hands ->
+      Map.put(new_hands, name, List.delete(Map.get(hands, name), c))
+    end)
+
+    {players_that_moved, %GameState{hands: new_hands, rows: new_rows, scores: new_scores}}
+  end
 end
 
 defmodule Player do
@@ -208,7 +207,11 @@ defmodule Player do
   end
 
   defp register_player(client) do
+    IO.puts inspect(client)
+    IO.puts "about to receive"
     {:ok, msg} = :gen_tcp.recv(client, 0)
+    IO.puts "Received"
+    IO.puts msg
     case Translator.parse(Poison.decode!(msg)) do
       {:player, name} ->
         player = {:player, name, self()}
@@ -236,7 +239,7 @@ end
 
 defmodule PlayerServer do
   def create(port) do
-    {:ok, socket} = :gen_tcp.listen(port, [:binary, packet: :line, active: false, reauseaddr: true])
+    {:ok, socket} = :gen_tcp.listen(port, [:binary, packet: :line, active: false, reuseaddr: true])
     loop(socket)
   end
 
