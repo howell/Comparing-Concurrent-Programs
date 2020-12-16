@@ -24,31 +24,50 @@
 (define (create-connection)
   (tcp-connect CONNECT-HOSTNAME CONNECT-PORT))
 
-;; PlayerID GamePlayer -> void
-(define (create-client player-name make-decision)
+;; PlayerID -> Void
+(define (create-client player-name)
+  ;; connect to the client
+  ;; send the client a Register message
+  ;; wait for a Registered message
+  ;; end
   (define-values (i o) (create-connection))
   (remove-tcp-buffer i o)
-  
+
   (sleep 1) ;; FIXME race due to spawning reader thread for syndicate driver
 
-  (write (declare-player player-name) o)
+  (write (register player-name) o)
 
-  (let loop ()
-    (define contents (read i))
-    (match contents
-      [(move-request number hand rows)
-       (let ([c (make-decision hand rows)])
-         (write (played-in-round player-name number c) o)
-         (loop))]
-      [(game-over winners)
-       (if (member player-name winners)
-         (printf "We won!\n")
-         (printf "We lost :(\n"))
-       (close-ports i o)])))
+  (define msg (read i))
+  (match msg
+    [(registered token) (printf "Yay! ~a\n" token)])
+
+  (close-ports i o))
+
+;; PlayerID GamePlayer -> void
+;; (define (create-client player-name make-decision)
+;;   (define-values (i o) (create-connection))
+;;   (remove-tcp-buffer i o)
+  
+;;   (sleep 1) ;; FIXME race due to spawning reader thread for syndicate driver
+
+;;   (write (declare-player player-name) o)
+
+;;   (let loop ()
+;;     (define contents (read i))
+;;     (match contents
+;;       [(move-request number hand rows)
+;;        (let ([c (make-decision hand rows)])
+;;          (write (played-in-round player-name number c) o)
+;;          (loop))]
+;;       [(game-over winners)
+;;        (if (member player-name winners)
+;;          (printf "We won!\n")
+;;          (printf "We lost :(\n"))
+;;        (close-ports i o)])))
 
 ;; GamePlayer
 (define (random-player hand rows)
   (random-ref hand))
 
 (command-line #:args (name)
-              (create-client (string->symbol name) random-player))
+              (create-client (string->symbol name)))

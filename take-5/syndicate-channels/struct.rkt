@@ -27,12 +27,19 @@
 (define REGISTER-DURATION 1000) ;; the amount of time clients have to register
 
 ;; ---------------------------------------------------------------------------------------------------
-;; a PlayerID is a Symbol
+;; a PlayerID is a unique Symbol
+;; a PlayerToken is a unique Symbol
 ;; a Hand is a [List-of Card]
 ;; a Score is a Nat
 ;; a RoundNumber is a Nat in [1, 10]
 ;; Scores is a [Hash-of PlayerID Score]
 ;;  - Scores must contain an entry for each existing PlayerID (i.e. it is safe to use hash-update)
+
+;; a Register is a (register PlayerID)
+(struct register (id) #:prefab)
+
+;; a Registered is a (registered PlayerToken)
+(struct registered (token) #:prefab)
 
 ;; a DeclarePlayer is a (declare-player PlayerID)
 (struct declare-player (id) #:prefab)
