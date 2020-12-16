@@ -18,6 +18,9 @@
 ;; a PlayerStruct is a (player PlayerID [Chan-of Round])
 (struct player (id chan) #:transparent)
 
+;; a UserRegister is a (user-register PlayerID [Chan-of (U Registered LoggedIn)])
+(struct user-register (id chan) #:transparent)
+
 ;; a DeclaredWinners is a (declared-winner/s [List-of PlayerID])
 (struct declared-winner/s (player/s) #:transparent)
 
@@ -266,26 +269,24 @@
        (log-registration name)
        (make-player name input output)])))
 
-;; Create a Player component that communicates with the client over TCP
-;; PlayerID Port Port -> PlayerStruct
-(define (make-player name input-port output-port)
-  (define round-chan (make-channel))
-  (thread
-    (thunk
-      (let loop ()
-        (define dealer-msg (channel-get round-chan))
-        (match dealer-msg
-          [(round number hand rows move-chan)
-           (write (move-request number hand rows) output-port)
-           (define move (read input-port))
-           (match move
-             [(played-in-round _ _ _)
-              (channel-put move-chan move)
-              (loop)])]
-          [(game-over _)
-           (write dealer-msg output-port)
-           (close-ports input-port output-port)]))))
-  (player name round-chan))
+;;;; OLD PLAYER CODE ;;;;;;
+  ;; (define round-chan (make-channel))
+  ;; (thread
+  ;;   (thunk
+  ;;     (let loop ()
+  ;;       (define dealer-msg (channel-get round-chan))
+  ;;       (match dealer-msg
+  ;;         [(round number hand rows move-chan)
+  ;;          (write (move-request number hand rows) output-port)
+  ;;          (define move (read input-port))
+  ;;          (match move
+  ;;            [(played-in-round _ _ _)
+  ;;             (channel-put move-chan move)
+  ;;             (loop)])]
+  ;;         [(game-over _)
+  ;;          (write dealer-msg output-port)
+  ;;          (close-ports input-port output-port)]))))
+  ;; (player name round-chan))
 
 ;; -> void
 (define (play-game)
@@ -298,4 +299,41 @@
   (sleep 1)
   (tcp-close server))
 
-(play-game)
+
+;;;;;;;;;;;;;;;;; EXTENDED VERSION ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Create a Player component that communicates with the client over TCP
+;; Port Port -> PlayerStruct
+(define (make-player input-port output-port auth-chan)
+  (define recv-auth-chan (make-channel))
+
+  (thread
+    (thunk
+      (define register-msg (read input-port))
+      (match register-msg
+        [(register user-id)
+         (channel-put auth-chan (user-register user-id recv-auth-chan))
+         (define registered-msg (channel-get recv-auth-chan))
+
+         (match registered-msg
+           [(registered token)
+            (log-registration user-id)
+            (write registered-msg output-port)
+            (close-ports input-port output-port)])]))))
+
+;; Chan -> Chan
+(define (make-authentication-manager lobby-chan)
+  (define auth-chan (make-channel))
+  (thread
+    (thunk
+      (let loop ([user-tokens (hash)] ;; [Hash-of UserID UserToken]
+                 [user-comms (hash)]) ;; [Hash-of UserID [Chan-of (U Registered LoggedIn)]]
+        (define msg (channel-get auth-chan))
+        (match msg
+          [(user-register id user-chan)
+           (define player-token (gensym id))
+           (channel-put user-chan (registered id player-token))
+           (loop (hash-set user-tokens id player-token)
+                 (hash-set user-comms id user-chan))]))))
+  auth-chan)
+
