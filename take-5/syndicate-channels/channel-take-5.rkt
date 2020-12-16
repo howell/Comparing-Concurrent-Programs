@@ -23,18 +23,9 @@
 
 ;;;;;;;;;;; Protocol ;;;;;;;;;;;;;;;
 
-;; NOTE should it fail silently?
-;; Structs to create:
-;; 1. Register
-;; 2. Registered
-;; 3. Log In
-;; 4. Logged In
-;; 5. List Rooms
-;; 6. Rooms
-;; 7. View Results
-;; 8. Results
+;; NOTE should messages fail silently or always some ack?
+
 ;; Notions to define:
-;; 1. Unique (user) token
 ;; 2. Room ID
 ;; 3. a Result object
 

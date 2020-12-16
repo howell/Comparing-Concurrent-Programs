@@ -1,6 +1,11 @@
 #lang racket
 
-;; Client Protocol
+;; Client Protocol (NEW)
+;; There are multiple clients communicating with one server.
+;; Clients register by sending a Register message, containing their name.
+;; The Server responds with a Registered message, containing a PlayerToken.
+
+;; Client Protocol (OLD)
 ;; There are multiple clients communicating with one server.
 ;;
 ;; Clients register to play the game with the server by connecting to the server and sending a
