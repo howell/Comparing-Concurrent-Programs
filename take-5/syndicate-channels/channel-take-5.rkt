@@ -23,15 +23,84 @@
 
 ;;;;;;;;;;; Protocol ;;;;;;;;;;;;;;;
 
-;; There are two roles in this protocol:
-;; 1. The Dealer, which manages the play of the game. There is one Dealer per
-;;    per game instance.
+;; NOTE should it fail silently?
+;; Structs to create:
+;; 1. Register
+;; 2. Registered
+;; 3. Log In
+;; 4. Logged In
+;; 5. List Rooms
+;; 6. Rooms
+;; 7. View Results
+;; 8. Results
+;; Notions to define:
+;; 1. Unique (user) token
+;; 2. Room ID
+;; 3. a Result object
+
+;; FIXME intro bad
+;; There is a conversation about authentication.
+;; Users must be logged into a user account before they can participate in games.
+;; Users must have a unique account token in order to log in. Users get
+;; unique tokens by sending a Register message to the Authentication Manager,
+;; containing the name of the user and a channel on which to send replies. The
+;; Authentication Manager replies with a Registered message, containing the client's
+;; unique token.
+;; To log in, Users send the Authentication Manager a Login message containing
+;; the User's name and unique token, and the Authentication Manager replies with
+;; a LoggedIn message, containing the Channel of the Lobby.
 ;;
-;; 2. The Player, which acts in the game and tries to win while obeying the
-;;    rules. There can be between 2 and 10 Players.
+;; There are multiple conversations between Users and the Lobby.
+;; To view rooms available to join in the Lobby, Users send a List Rooms message to
+;; the Lobby, containing the channel on which to send replies. The Lobby responds
+;; with a Rooms message, containing a list of unique Room IDs.
+;; 
+;; To view the results of games played by the User, the User sends a View Results
+;; message to the Lobby, containing the channel to send replies on. The Lobby replies
+;; with a Results message, containing a list of the Results of games played by the User.
 ;;
-;; 3. The Game Observer, which monitors and waits for the result of a run
-;;    of the game. There is one per game instance.
+;; To create a room, Users send a Create Room message to the Lobby, containing
+;; the User's channel. The Lobby creates a new Room component associated
+;; with a unique ID, and the Room sends a NewRoom message to the client, containing
+;; the ID of the Room and the channel of communication for the Room.
+;; 
+;; To join a room, Users send a Join Room message to the Lobby, containing the channel
+;; of the User. The Lobby forwards the message to the Room, and the Room replies to
+;; the User with a JoinedRoom message, containing the channel of the Room for communication.
+;; The User is designated as the Guest.
+;; 
+;; To Log Out, Users send a Log Out message to the Lobby. The Lobby stops all future
+;; communication with the User until they have logged back in via the Authentication
+;; Manager.
+;;
+;; There are multiple conversations between the Room and its Host and Guests.
+;; To cancel a game, the Host sends a Cancel Game message to the Room. The Room
+;; sends a Cancelled Game message to the Host and Guests, and can no longer be
+;; communicated with.
+;;
+;; To start a game, the Host sends a Start Game message to the Room. The Room
+;; spawns a Dealer which sends a Started Game message to the Host and Guests.
+;; Host and Guests are then designated as Players.
+;;
+;; A Guest may leave the game by sending a Leave Game message to the room.
+;; They can no longer communicate with that Room unless they join it again.
+;;
+;; There are two conversations regarding playing the game:
+;; To play a round of the game, the Dealer sends each Player a Round message
+;; containing the Player's hand, the current rows, and a channel for posting
+;; Move messages to. A Player makes a move by sending a Move message to that
+;; channel, containing the PlayerID of the Player, the current round number, and
+;; the card that the Player has selected from their hand to play.
+;; The Dealer leads 10 rounds in sequence in this way.
+;;
+;; Rules/Assumptions for this conversation:
+;; 1. Players only play cards in their Hand
+;; 2. Players send Move messages with their own PlayerID only
+;; 3. Players only send one Move message per round
+;;
+;; There is a conversation about the result of the game. Upon the conclusion of
+;; the game, the Dealer sends a GameResult message to all Players and the Lobby.
+;; The Dealer terminates and cannot be communicated with any further.
 
 ;; Conversations
 ;; There is a conversation about playing one round of the game. The Dealer starts a round
