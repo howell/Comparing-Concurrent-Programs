@@ -18,6 +18,7 @@
 ;; Invariant: the card selected by the client must be present in the hand the client the received. 
 
 (require [only-in racket/random random-ref])
+(require [only-in racket/trace trace-define])
 (require "struct.rkt")
 
 ;; -> [List-of Port]
@@ -25,7 +26,7 @@
   (tcp-connect CONNECT-HOSTNAME CONNECT-PORT))
 
 ;; PlayerID -> Void
-(define (create-client player-name)
+(trace-define (create-client player-name)
   ;; connect to the client
   ;; send the client a Register message
   ;; wait for a Registered message

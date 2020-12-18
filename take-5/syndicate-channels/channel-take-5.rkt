@@ -18,8 +18,11 @@
 ;; a PlayerStruct is a (player PlayerID [Chan-of Round])
 (struct player (id chan) #:transparent)
 
-;; a UserRegister is a (user-register PlayerID [Chan-of (U Registered LoggedIn)])
+;; a UserRegister is a (user-register PlayerID [Chan-of (U Registered UserLoggedIn)])
 (struct user-register (id chan) #:transparent)
+
+;; a UserLoggedIn is a (user-logged-in [Chan-of LobbyMsg])
+(struct user-logged-in (lobby-chan) #:transparent)
 
 ;; a DeclaredWinners is a (declared-winner/s [List-of PlayerID])
 (struct declared-winner/s (player/s) #:transparent)
@@ -32,17 +35,19 @@
 ;; 2. Room ID
 ;; 3. a Result object
 
-;; FIXME intro bad
-;; There is a conversation about authentication.
-;; Users must be logged into a user account before they can participate in games.
-;; Users must have a unique account token in order to log in. Users get
-;; unique tokens by sending a Register message to the Authentication Manager,
-;; containing the name of the user and a channel on which to send replies. The
-;; Authentication Manager replies with a Registered message, containing the client's
-;; unique token.
-;; To log in, Users send the Authentication Manager a Login message containing
-;; the User's name and unique token, and the Authentication Manager replies with
-;; a LoggedIn message, containing the Channel of the Lobby.
+;; There is a conversation about registration.
+;; Users register for a user account by sending a UserRegister message to the 
+;; Authentication Manager, including the UserID of the User and the Channel on 
+;; which to receive authentication replies from the Authentication Manager.
+;; The Authentication Manager replies with a Registered message, containing the
+;; UserToken corresponding to the User that the User must use to log into their
+;; user account.
+;; 
+;; There is a conversation about Login.
+;; Users send a Login message to the Authentication Manager containing their UserID
+;; and their UserToken. If the UserToken correctly corresponds to the UserID, then
+;; the Authentication Manager responds with a UserLoggedIn message, containing the
+;; Channel of the Lobby.
 ;;
 ;; There are multiple conversations between Users and the Lobby.
 ;; To view rooms available to join in the Lobby, Users send a List Rooms message to
@@ -256,20 +261,20 @@
         (λ (_) connections)))))
 
 ;; Listener -> [List-of PlayerStruct]
-(define (initialize-players listener)
-  (define connections (accept-connections listener))
+;; (define (initialize-players listener)
+;;   (define connections (accept-connections listener))
 
-  ;; TODO add some timeout here, not sure how to give everybody a chance
-  ;; loop through one at a time and see if they're ready to read?
-  ;; or, wait one second, then check which ones are ready to read and accept those
-  (for/list ([conn connections])
-    (match-define (ports input output) conn)
-    (match (read input)
-      [(declare-player name)
-       (log-registration name)
-       (make-player name input output)])))
+;;   ;; TODO add some timeout here, not sure how to give everybody a chance
+;;   ;; loop through one at a time and see if they're ready to read?
+;;   ;; or, wait one second, then check which ones are ready to read and accept those
+;;   (for/list ([conn connections])
+;;     (match-define (ports input output) conn)
+;;     (match (read input)
+;;       [(declare-player name)
+;;        (log-registration name)
+;;        (make-player name input output)])))
 
-;;;; OLD PLAYER CODE ;;;;;;
+;;;; OLD PLAYER-SERVER CODE ;;;;;;
   ;; (define round-chan (make-channel))
   ;; (thread
   ;;   (thunk
@@ -289,22 +294,41 @@
   ;; (player name round-chan))
 
 ;; -> void
-(define (play-game)
-  (define server (tcp-listen CONNECT-PORT))
-  (define players (initialize-players server))
+;; (define (play-game)
+;;   (define server (tcp-listen CONNECT-PORT))
+;;   (define players (initialize-players server))
 
-  (define game-result-chan (make-dealer (shuffle the-deck) players))
-  (channel-get game-result-chan)
+;;   (define game-result-chan (make-dealer (shuffle the-deck) players))
+;;   (channel-get game-result-chan)
 
-  (sleep 1)
-  (tcp-close server))
+;;   (sleep 1)
+;;   (tcp-close server))
 
 
 ;;;;;;;;;;;;;;;;; EXTENDED VERSION ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; Create a Player component that communicates with the client over TCP
-;; Port Port -> PlayerStruct
-(define (make-player input-port output-port auth-chan)
+(define (create-clients listener auth-chan)
+  (define accept-deadline (+ (current-inexact-milliseconds) CONN-DURATION))
+  (define accept-timeout (alarm-evt accept-deadline))
+
+  (let loop ()
+    (define accept-evt (tcp-accept-evt listener))
+    (sync
+      (handle-evt
+        accept-evt
+        (match-lambda
+          [(list input output)
+           (log-connection)
+           (remove-tcp-buffer input output)
+           (make-user input output auth-chan)
+           (loop)]))
+      (handle-evt 
+        accept-timeout
+        (λ (_) #f)))))
+
+;; Create a User component that communicates with the client over TCP
+;; Port Port -> Void
+(define (make-user input-port output-port auth-chan)
   (define recv-auth-chan (make-channel))
 
   (thread
@@ -332,8 +356,16 @@
         (match msg
           [(user-register id user-chan)
            (define player-token (gensym id))
-           (channel-put user-chan (registered id player-token))
+           (channel-put user-chan (registered player-token))
            (loop (hash-set user-tokens id player-token)
                  (hash-set user-comms id user-chan))]))))
   auth-chan)
 
+(define lobby-chan (make-channel))
+
+(define server (tcp-listen CONNECT-PORT))
+
+(define auth-chan (make-authentication-manager lobby-chan))
+(create-clients server auth-chan)
+
+(channel-get lobby-chan)

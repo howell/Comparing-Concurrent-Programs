@@ -9,6 +9,8 @@
   (struct-out declare-player)
   (struct-out move-request)
   (struct-out game-over)
+  (struct-out register)
+  (struct-out registered)
 
   ;; Constants
   CONNECT-PORT
@@ -40,6 +42,12 @@
 
 ;; a Registered is a (registered UserToken)
 (struct registered (token) #:prefab)
+
+;; a Login is a (log-in UserID UserToken)
+(struct login (id token) #:prefab)
+
+;; a LoggedIn is a (logged-in)
+(struct logged-in () #:prefab)
 
 ;; a DeclarePlayer is a (declare-player PlayerID)
 (struct declare-player (id) #:prefab)
