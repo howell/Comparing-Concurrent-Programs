@@ -358,7 +358,11 @@
            (define player-token (gensym id))
            (channel-put user-chan (registered player-token))
            (loop (hash-set user-tokens id player-token)
-                 (hash-set user-comms id user-chan))]))))
+                 (hash-set user-comms id user-chan))]
+          [(login id token)
+           (when (symbol=? token (hash-ref user-tokens id))
+             (channel-put (hash-ref user-comms id) (user-logged-in lobby-chan))
+             (loop user-tokens user-comms))]))))
   auth-chan)
 
 (define lobby-chan (make-channel))
