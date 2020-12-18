@@ -365,8 +365,8 @@
       [(register user-id)
        (register-user user-id)
        (handle-auth-comm)]
-      [(log-in-user user-id token)
-       (define lobby-chan (login-user user-id token))
+      [(login user-id token)
+       (define lobby-chan (log-in-user user-id token))
        (handle-lobby-comm lobby-chan)]))
 
   ;; Handle communication between client and lobby
@@ -386,12 +386,12 @@
   ;; Register the client with a user account
   ;; UserID -> Void
   (define (register-user id)
-    (channel-put auth-chan (user-register user-id recv-auth-chan))
+    (channel-put auth-chan (user-register id recv-auth-chan))
     (define server-msg (channel-get recv-auth-chan))
 
     (match server-msg
       [(registered token)
-       (log-registration user-id)
+       (log-registration id)
        (write server-msg output-port)]))
 
   ;; UserID UserToken -> Void
@@ -434,7 +434,7 @@
 
 (define server (tcp-listen CONNECT-PORT))
 
-(define auth-chan (make-authentication-manager lobby-chan "login.rkt"))
+(define auth-chan (make-authentication-manager lobby-chan "login.info"))
 (create-clients server auth-chan)
 
 (channel-get lobby-chan)

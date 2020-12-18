@@ -1,6 +1,7 @@
 .nvimrc
 *.txt
 *.jpeg
+*.info
 
 # The directory Mix will write compiled artifacts to.
 **/elixir/_build/
