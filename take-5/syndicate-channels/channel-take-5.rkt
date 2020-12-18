@@ -350,34 +350,63 @@
   user-comm-chan)
 
 
+;; FIXME is this a good design?
 ;; Create a User component that communicates with the client over TCP
 ;; Port Port -> Void
 (define (make-user input-port output-port auth-chan)
   (define recv-auth-chan (make-channel))
+  (define recv-lobby-chan (make-channel))
+
+  ;; Handle communication while client authenticating 
+  ;; -> Void
+  (define (handle-auth-comm)
+    (define client-msg (read input-port))
+    (match client-msg
+      [(register user-id)
+       (register-user user-id)
+       (handle-auth-comm)]
+      [(log-in-user user-id token)
+       (define lobby-chan (login-user user-id token))
+       (handle-lobby-comm lobby-chan)]))
+
+  ;; Handle communication between client and lobby
+  ;; Chan -> Void
+  (define (handle-lobby-comm lobby-chan)
+    (define client-msg (read input-port))
+    (match client-msg
+      [(list-rooms)
+       (channel-put lobby-chan (user-list-rooms recv-lobby-chan))
+       (define server-msg (channel-get recv-lobby-chan))
+
+       (match server-msg
+         [(rooms items)
+          (write server-msg output-port)
+          (close-ports input-port output-port)])]))
+
+  ;; Register the client with a user account
+  ;; UserID -> Void
+  (define (register-user id)
+    (channel-put auth-chan (user-register user-id recv-auth-chan))
+    (define server-msg (channel-get recv-auth-chan))
+
+    (match server-msg
+      [(registered token)
+       (log-registration user-id)
+       (write server-msg output-port)]))
+
+  ;; UserID UserToken -> Void
+  (define (log-in-user id token)
+    (channel-put auth-chan (login id token))
+    (define server-msg (channel-get recv-auth-chan))
+
+    (match server-msg
+      [(user-logged-in lobby-chan)
+       (write (logged-in) output-port)
+       lobby-chan]))
 
   (thread
     (thunk
-      (let loop ()
-
-        (define client-msg (read input-port))
-        (define user-id
-          (match client-msg
-            [(register user-id)
-             (channel-put auth-chan (user-register user-id recv-auth-chan))
-             user-id]
-            [(login user-id token)
-             (channel-put auth-chan client-msg)
-             user-id]))
-
-        (define server-msg (channel-get recv-auth-chan))
-        (match server-msg
-          [(registered token)
-           (log-registration user-id)
-           (write server-msg output-port)
-           (loop)]
-          [(user-logged-in lobby-chan)
-           (write (logged-in) output-port)
-           (close-ports input-port output-port)])))))
+      (handle-auth-comm))))
 
 ;; Chan -> Chan
 (define (make-authentication-manager lobby-chan auth-db)
