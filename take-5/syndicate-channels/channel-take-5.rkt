@@ -370,7 +370,7 @@
            (loop (hash-set user-tokens id player-token)
                  (hash-set user-comms id user-chan))]
           [(login id token)
-           (when (symbol=? token (hash-ref user-tokens id))
+           (when (string=? (symbol->string token) (symbol->string (hash-ref user-tokens id)))
              (channel-put (hash-ref user-comms id) (user-logged-in lobby-chan))
              (loop user-tokens user-comms))]))))
   auth-chan)

@@ -44,7 +44,7 @@
 ;; UserID Port Port -> UserToken
 (define (authenticate id input output)
   ;; Register the User
-  (write (register player-name) output)
+  (write (register id) output)
   (define registered-msg (read input))
   (define token (registered-token registered-msg))
 
