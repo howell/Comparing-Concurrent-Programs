@@ -11,6 +11,8 @@
   (struct-out game-over)
   (struct-out register)
   (struct-out registered)
+  (struct-out login)
+  (struct-out logged-in)
 
   ;; Constants
   CONNECT-PORT
