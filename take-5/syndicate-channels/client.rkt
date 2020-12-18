@@ -38,6 +38,11 @@
 
   (define token (authenticate user-id i o))
 
+  (write (list-rooms) o)
+  (define rooms-msg (read i))
+
+  (printf "Current rooms available: ~a\n" (rooms-items rooms-msg))
+
   (close-ports i o))
 
 ;; register and log in the user
