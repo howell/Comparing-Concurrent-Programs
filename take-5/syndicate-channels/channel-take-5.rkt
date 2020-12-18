@@ -356,7 +356,7 @@
            (close-ports input-port output-port)])))))
 
 ;; Chan -> Chan
-(define (make-authentication-manager lobby-chan)
+(define (make-authentication-manager lobby-chan auth-db)
   (define auth-chan (make-channel))
   (thread
     (thunk
@@ -365,10 +365,11 @@
         (define msg (channel-get auth-chan))
         (match msg
           [(user-register id user-chan)
-           (define player-token (gensym id))
-           (channel-put user-chan (registered player-token))
-           (loop (hash-set user-tokens id player-token)
-                 (hash-set user-comms id user-chan))]
+           (define user-token (gensym id))
+           (channel-put user-chan (registered user-token))
+           (define new-tokens (hash-set user-tokens id user-token))
+           (write-to-file new-tokens auth-db #:exists 'replace)
+           (loop new-tokens (hash-set user-comms id user-chan))]
           [(login id token)
            (when (string=? (symbol->string token) (symbol->string (hash-ref user-tokens id)))
              (channel-put (hash-ref user-comms id) (user-logged-in lobby-chan))
@@ -379,7 +380,7 @@
 
 (define server (tcp-listen CONNECT-PORT))
 
-(define auth-chan (make-authentication-manager lobby-chan))
+(define auth-chan (make-authentication-manager lobby-chan "login.rkt"))
 (create-clients server auth-chan)
 
 (channel-get lobby-chan)
