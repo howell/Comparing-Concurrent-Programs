@@ -13,6 +13,8 @@
   (struct-out registered)
   (struct-out login)
   (struct-out logged-in)
+  (struct-out list-rooms)
+  (struct-out rooms)
 
   ;; Constants
   CONNECT-PORT
@@ -33,6 +35,7 @@
 ;; ---------------------------------------------------------------------------------------------------
 ;; a UserID is a unique Symbol
 ;; a UserToken is a unique Symbol
+;; a RoomID is a unique Symbol
 ;; a Hand is a [List-of Card]
 ;; a Score is a Nat
 ;; a RoundNumber is a Nat in [1, 10]
@@ -50,6 +53,12 @@
 
 ;; a LoggedIn is a (logged-in)
 (struct logged-in () #:prefab)
+
+;; a ListRooms is a (list-rooms)
+(struct list-rooms () #:prefab)
+
+;; a Rooms is a (rooms [List-of RoomID])
+(struct rooms (items) #:prefab)
 
 ;; a DeclarePlayer is a (declare-player PlayerID)
 (struct declare-player (id) #:prefab)

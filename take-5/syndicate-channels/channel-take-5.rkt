@@ -24,6 +24,9 @@
 ;; a UserLoggedIn is a (user-logged-in [Chan-of LobbyMsg])
 (struct user-logged-in (lobby-chan) #:transparent)
 
+;; a UserListRooms is a (user-list-rooms [Chan-of LobbyMsg])
+(struct user-list-rooms (chan) #:transparent)
+
 ;; a DeclaredWinners is a (declared-winner/s [List-of PlayerID])
 (struct declared-winner/s (player/s) #:transparent)
 
@@ -48,6 +51,12 @@
 ;; and their UserToken. If the UserToken correctly corresponds to the UserID, then
 ;; the Authentication Manager responds with a UserLoggedIn message, containing the
 ;; Channel of the Lobby.
+;;
+;; To view rooms available to join in the lobby, a User sends a UserListRooms message
+;; to the Lobby, containing a Channel for receiving Lobby replies. The Lobby replies
+;; with a Rooms message, containing a List of RoomIDs.
+
+
 ;;
 ;; There are multiple conversations between Users and the Lobby.
 ;; To view rooms available to join in the Lobby, Users send a List Rooms message to
@@ -325,6 +334,15 @@
       (handle-evt 
         accept-timeout
         (λ (_) #f)))))
+
+(define (make-lobby)
+  (define user-comm-chan (make-channel))
+
+  (thread
+    (thunk
+      (let loop ([rooms (hash)]) ;; [Hash-of RoomID Chan]
+        (define msg (channel-get user-comm-chan))
+
 
 ;; Create a User component that communicates with the client over TCP
 ;; Port Port -> Void
