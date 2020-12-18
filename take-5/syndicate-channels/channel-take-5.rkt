@@ -349,7 +349,7 @@
         (match server-msg
           [(registered token)
            (log-registration user-id)
-           (write registered-msg output-port)
+           (write server-msg output-port)
            (loop)]
           [(user-logged-in lobby-chan)
            (write (logged-in) output-port)
