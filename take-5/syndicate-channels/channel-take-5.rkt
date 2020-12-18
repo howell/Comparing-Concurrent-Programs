@@ -342,6 +342,12 @@
     (thunk
       (let loop ([rooms (hash)]) ;; [Hash-of RoomID Chan]
         (define msg (channel-get user-comm-chan))
+        (match msg
+          [(user-list-rooms resp-chan)
+           (channel-put resp-chan (hash-keys rooms))
+           (loop rooms)]))))
+
+  user-comm-chan)
 
 
 ;; Create a User component that communicates with the client over TCP
@@ -394,7 +400,8 @@
              (loop user-tokens user-comms))]))))
   auth-chan)
 
-(define lobby-chan (make-channel))
+(define general-chan (make-channel))
+(define lobby-chan (make-lobby))
 
 (define server (tcp-listen CONNECT-PORT))
 
