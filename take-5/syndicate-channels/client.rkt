@@ -25,8 +25,8 @@
 (define (create-connection)
   (tcp-connect CONNECT-HOSTNAME CONNECT-PORT))
 
-;; PlayerID -> Void
-(trace-define (create-client player-name)
+;; UserID -> Void
+(trace-define (create-client user-id)
   ;; connect to the client
   ;; send the client a Register message
   ;; wait for a Registered message
@@ -36,13 +36,27 @@
 
   (sleep 1) ;; FIXME race due to spawning reader thread for syndicate driver
 
-  (write (register player-name) o)
-
-  (define msg (read i))
-  (match msg
-    [(registered token) (printf "Yay! ~a\n" token)])
+  (define token (authenticate user-id i o))
 
   (close-ports i o))
+
+;; register and log in the user
+;; UserID Port Port -> UserToken
+(define (authenticate id input output)
+  ;; Register the User
+  (write (register player-name) output)
+  (define registered-msg (read input))
+  (define token (registered-token registered-msg))
+
+  ;; Log-in the User
+  (write (login id token) output)
+  (define logged-in-msg (read input))
+  (match logged-in-msg
+    [(logged-in) (printf "Yay! ~a is logged in with token ~a!\n" id token)])
+
+  ;; Return the token for future use
+  token)
+  
 
 ;; PlayerID GamePlayer -> void
 ;; (define (create-client player-name make-decision)
