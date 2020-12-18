@@ -333,17 +333,27 @@
 
   (thread
     (thunk
-      (define register-msg (read input-port))
-      (match register-msg
-        [(register user-id)
-         (channel-put auth-chan (user-register user-id recv-auth-chan))
-         (define registered-msg (channel-get recv-auth-chan))
+      (let loop ()
 
-         (match registered-msg
-           [(registered token)
-            (log-registration user-id)
-            (write registered-msg output-port)
-            (close-ports input-port output-port)])]))))
+        (define client-msg (read input-port))
+        (define user-id
+          (match client-msg
+            [(register user-id)
+             (channel-put auth-chan (user-register user-id recv-auth-chan))
+             user-id]
+            [(login user-id token)
+             (channel-put auth-chan client-msg)
+             user-id]))
+
+        (define server-msg (channel-get recv-auth-chan))
+        (match server-msg
+          [(registered token)
+           (log-registration user-id)
+           (write registered-msg output-port)
+           (loop)]
+          [(user-logged-in lobby-chan)
+           (write (logged-in) output-port)
+           (close-ports input-port output-port)])))))
 
 ;; Chan -> Chan
 (define (make-authentication-manager lobby-chan)
