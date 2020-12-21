@@ -26,7 +26,7 @@
   (tcp-connect CONNECT-HOSTNAME CONNECT-PORT))
 
 ;; UserID -> Void
-(trace-define (create-client user-id)
+(define (create-client user-id)
   ;; connect to the client
   ;; send the client a Register message
   ;; wait for a Registered message
@@ -38,7 +38,7 @@
 
   (define token (authenticate user-id i o))
 
-  (write (list-rooms) o)
+  (write (list-rooms user-id) o)
   (define rooms-msg (read i))
 
   (printf "Current rooms available: ~a\n" (rooms-items rooms-msg))

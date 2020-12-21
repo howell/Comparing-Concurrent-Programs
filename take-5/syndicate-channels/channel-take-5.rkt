@@ -340,11 +340,11 @@
 
   (thread
     (thunk
-      (let loop ([rooms (hash)]) ;; [Hash-of RoomID Chan]
+      (let loop ([room-lookup (hash)]) ;; [Hash-of RoomID Chan]
         (define msg (channel-get user-comm-chan))
         (match msg
           [(user-list-rooms resp-chan)
-           (channel-put resp-chan (hash-keys rooms))
+           (channel-put resp-chan (rooms (hash-keys room-lookup)))
            (loop rooms)]))))
 
   user-comm-chan)
