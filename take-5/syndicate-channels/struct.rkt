@@ -55,7 +55,7 @@
 (struct logged-in () #:prefab)
 
 ;; a ListRooms is a (list-rooms)
-(struct list-rooms () #:prefab)
+(struct list-rooms (id) #:prefab)
 
 ;; a Rooms is a (rooms [List-of RoomID])
 (struct rooms (items) #:prefab)

@@ -4,8 +4,17 @@
  ;; -> Void
  log-connection
 
- ;; PlayerID -> Void
+ ;; UserID -> Void
  log-registration
+
+ ;; UserID -> Void
+ log-login
+
+ ;; UserID -> Void
+ log-list-rooms
+
+ ;; [List-of RoomID] -> Void
+ log-rooms
 
  ;; Rows -> Void
  log-rows
@@ -38,7 +47,16 @@
   (log-take-5-debug "Client has connected!"))
 
 (define (log-registration id)
-  (log-take-5-debug "Player ~a has registered to play!" id))
+  (log-take-5-debug "User ~a has registered for a user account!" id))
+
+(define (log-login id)
+  (log-take-5-debug "User ~a has logged into their account!" id))
+
+(define (log-list-rooms id)
+  (log-take-5-debug "User ~a has requested the available rooms!" id))
+
+(define (log-rooms rooms)
+  (log-take-5-debug "The rooms currently open are: ~a" rooms))
 
 (define (log-move m)
   (match-define (played-in-round pid r c) m)

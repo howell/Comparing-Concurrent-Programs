@@ -374,12 +374,14 @@
   (define (handle-lobby-comm lobby-chan)
     (define client-msg (read input-port))
     (match client-msg
-      [(list-rooms)
+      [(list-rooms id)
+       (log-list-rooms id)
        (channel-put lobby-chan (user-list-rooms recv-lobby-chan))
        (define server-msg (channel-get recv-lobby-chan))
 
        (match server-msg
          [(rooms items)
+          (log-rooms items)
           (write server-msg output-port)
           (close-ports input-port output-port)])]))
 
@@ -401,6 +403,7 @@
 
     (match server-msg
       [(user-logged-in lobby-chan)
+       (log-login id)
        (write (logged-in) output-port)
        lobby-chan]))
 
