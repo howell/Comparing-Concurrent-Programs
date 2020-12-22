@@ -43,6 +43,11 @@
 
   (printf "Current rooms available: ~a\n" (rooms-items rooms-msg))
 
+  (write (get-results user-id) o)
+  (define results-msg (read i))
+
+  (printf "Game results: ~a\n" (results-items results-msg)) 
+
   (close-ports i o))
 
 ;; register and log in the user

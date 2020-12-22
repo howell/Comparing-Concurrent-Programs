@@ -21,11 +21,15 @@
 ;; a UserRegister is a (user-register PlayerID [Chan-of (U Registered UserLoggedIn)])
 (struct user-register (id chan) #:transparent)
 
+;; FIXME need to define LobbyMsg
 ;; a UserLoggedIn is a (user-logged-in [Chan-of LobbyMsg])
 (struct user-logged-in (lobby-chan) #:transparent)
 
 ;; a UserListRooms is a (user-list-rooms [Chan-of LobbyMsg])
 (struct user-list-rooms (chan) #:transparent)
+
+;; a UserGetResults is a (user-get-results UserID [Chan-of LobbyMsg])
+(struct user-get-results (id chan) #:transparent)
 
 ;; a DeclaredWinners is a (declared-winner/s [List-of PlayerID])
 (struct declared-winner/s (player/s) #:transparent)
@@ -33,10 +37,6 @@
 ;;;;;;;;;;; Protocol ;;;;;;;;;;;;;;;
 
 ;; NOTE should messages fail silently or always some ack?
-
-;; Notions to define:
-;; 2. Room ID
-;; 3. a Result object
 
 ;; There is a conversation about registration.
 ;; Users register for a user account by sending a UserRegister message to the 
@@ -55,6 +55,12 @@
 ;; To view rooms available to join in the lobby, a User sends a UserListRooms message
 ;; to the Lobby, containing a Channel for receiving Lobby replies. The Lobby replies
 ;; with a Rooms message, containing a List of RoomIDs.
+;;
+;; To view the results of games played by a User, a User sends a UserGetResults to
+;; the Lobby, containing the UserID of the User and a Channel for the Lobby to send
+;; replies to. The Lobby replies with a Results message, containing a List-of Result
+;; structs, where each Scores hash contains the UserID as a key (representing a game
+;; the User participated in).
 
 
 ;;
@@ -340,13 +346,21 @@
 
   (thread
     (thunk
-      (let loop ([room-lookup (hash)]) ;; [Hash-of RoomID Chan]
+      (let loop ([room-lookup (hash)]   ;; [Hash-of RoomID Chan]
+                 [score-lookup (hash)]) ;; [Hash-of RoomID Scores]
         (define msg (channel-get user-comm-chan))
         (match msg
           [(user-list-rooms resp-chan)
            (channel-put resp-chan (rooms (hash-keys room-lookup)))
-           (loop rooms)]))))
+           (loop room-lookup score-lookup)]
+          [(user-get-results id resp-chan)
+           (define user-results
+             (for/list ([(room-id scores) (in-hash score-lookup)]
+                        #:when (hash-has-key? scores id))
+               (result room-id scores)))
 
+           (channel-put resp-chan (results user-results))
+           (loop room-lookup score-lookup)]))))
   user-comm-chan)
 
 
@@ -372,18 +386,28 @@
   ;; Handle communication between client and lobby
   ;; Chan -> Void
   (define (handle-lobby-comm lobby-chan)
-    (define client-msg (read input-port))
-    (match client-msg
-      [(list-rooms id)
-       (log-list-rooms id)
-       (channel-put lobby-chan (user-list-rooms recv-lobby-chan))
-       (define server-msg (channel-get recv-lobby-chan))
+    (let loop ()
+      (define client-msg (read input-port))
+      (match client-msg
+        [(list-rooms id)
+         (log-list-rooms id)
+         (channel-put lobby-chan (user-list-rooms recv-lobby-chan))
+         (define server-msg (channel-get recv-lobby-chan))
 
-       (match server-msg
-         [(rooms items)
-          (log-rooms items)
-          (write server-msg output-port)
-          (close-ports input-port output-port)])]))
+         (match server-msg
+           [(rooms items)
+            (log-rooms items)
+            (write server-msg output-port)
+            (loop)])]
+
+        [(get-results id)
+         (channel-put lobby-chan (user-get-results id recv-lobby-chan))
+         (define server-msg (channel-get recv-lobby-chan))
+
+         (match server-msg
+           [(results items)
+            (write server-msg output-port)
+            (close-ports input-port output-port)])])))
 
   ;; Register the client with a user account
   ;; UserID -> Void

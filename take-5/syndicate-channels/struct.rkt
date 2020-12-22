@@ -15,6 +15,9 @@
   (struct-out logged-in)
   (struct-out list-rooms)
   (struct-out rooms)
+  (struct-out get-results)
+  (struct-out result)
+  (struct-out results)
 
   ;; Constants
   CONNECT-PORT
@@ -38,9 +41,9 @@
 ;; a RoomID is a unique Symbol
 ;; a Hand is a [List-of Card]
 ;; a Score is a Nat
-;; a RoundNumber is a Nat in [1, 10]
-;; Scores is a [Hash-of PlayerID Score]
+;; Scores is a [Hash-of UserID Score]
 ;;  - Scores must contain an entry for each existing PlayerID (i.e. it is safe to use hash-update)
+;; a RoundNumber is a Nat in [1, 10]
 
 ;; a Register is a (register UserID)
 (struct register (id) #:prefab)
@@ -59,6 +62,15 @@
 
 ;; a Rooms is a (rooms [List-of RoomID])
 (struct rooms (items) #:prefab)
+
+;; a GetResults is a (get-results UserID)
+(struct get-results (player) #:prefab)
+
+;; a Result is a (result RoomID Scores)
+(struct result (room-id scores) #:prefab)
+
+;; a Results is a (results [List-of Result])
+(struct results (items) #:prefab) ;; FIXME I don't like `items`
 
 ;; a DeclarePlayer is a (declare-player PlayerID)
 (struct declare-player (id) #:prefab)
