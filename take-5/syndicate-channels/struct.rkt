@@ -21,6 +21,9 @@
   (struct-out create-room)
   (struct-out join-room)
   (struct-out room)
+  (struct-out leave-room)
+  (struct-out cancel-game)
+  (struct-out game-cancelled)
 
   ;; Constants
   CONNECT-PORT
@@ -84,6 +87,15 @@
 
 ;; a Room is a (room RoomID) --> FIXME should the room have the creating UserID? probably not
 (struct room (id) #:prefab)
+
+;; a LeaveRoom is a (leave-room UserID)
+(struct leave-room (id) #:prefab)
+
+;; a CancelGame is a (cancel-game)
+(struct cancel-game () #:prefab)
+
+;; a GameCancelled is a (game-cancelled RoomID)
+(struct game-cancelled (id) #:prefab)
 
 ;; a DeclarePlayer is a (declare-player PlayerID)
 (struct declare-player (id) #:prefab)

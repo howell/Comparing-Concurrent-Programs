@@ -360,15 +360,23 @@
     (thunk
       (channel-put host-chan (user-room room-id host-recv-chan))
 
-      (let loop ([guests '()]) ;; [List-of Chan]
-        (define lobby-msg (channel-get lobby-recv-chan))
-        (match lobby-msg
-          [(user-join-room user-id room-id chan)
-           (channel-put chan (user-room room-id guest-recv-chan))
-           (loop (cons chan guests))]))))
+      (let loop ([guests '()]) ;; [Hash-of UserID Chan]
+        (define guest-evts (apply choice-evt guests))
+        (sync
+          (handle-evt
+            guest-evts
+            (match-lambda
+              [(leave-room user-id)
+               (loop (hash-remove guests user-id))]))
+          (handle-evt
+            host-chan
+            (match-lambda
+              [(cancel-game)
+               (for ([(user-id chan) guests])
+                 (channel-put chan (game-cancelled room-id)))
+               (channel-put lobby-chan (game-cancelled room-id))]))))))
 
   lobby-recv-chan)
-      
 
 (define (make-lobby)
   (define user-comm-chan (make-channel))
