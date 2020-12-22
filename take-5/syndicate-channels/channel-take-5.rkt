@@ -31,10 +31,14 @@
 ;; a UserGetResults is a (user-get-results UserID [Chan-of LobbyMsg])
 (struct user-get-results (id chan) #:transparent)
 
+;; I don't know what RoomMsg means anymore
 ;; a UserCreateRoom is a (user-create-room UserID [Chan-of RoomMsg]) ;; FIXME should it be RoomMsg or LobbyMsg?
 (struct user-create-room (id chan) #:transparent)
 
-;; a UserRoom is a (user-room RoomID [Chan-of HostRoomMsg]) ;; FIXME need to define HostRoomMsg as well
+;; a UserJoinRoom is a (user-join-room UserID RoomID [Chan-of RoomMsg])
+(struct user-join-room (user id chan) #:transparent)
+
+;; a UserRoom is a (user-room RoomID [Chan-of RoomMsg]) ;; FIXME should there be a difference in the reply to Host vs. Guest?
 (struct user-room (id chan) #:transparent)
 
 ;; a DeclaredWinners is a (declared-winner/s [List-of PlayerID])
@@ -350,10 +354,18 @@
 (define (make-room room-id lobby-chan host-chan)
   (define lobby-recv-chan (make-channel))
   (define host-recv-chan (make-channel))
+  (define guest-recv-chan (make-channel))
 
   (thread
     (thunk
-      (channel-put host-chan (user-room room-id host-recv-chan))))
+      (channel-put host-chan (user-room room-id host-recv-chan))
+
+      (let loop ([guests '()]) ;; [List-of Chan]
+        (define lobby-msg (channel-get lobby-recv-chan))
+        (match lobby-msg
+          [(user-join-room user-id room-id chan)
+           (channel-put chan (user-room room-id guest-recv-chan))
+           (loop (cons chan guests))]))))
 
   lobby-recv-chan)
       
@@ -382,7 +394,11 @@
           [(user-create-room id resp-chan)
            (define room-id (gensym id))
            (define room-chan (make-room room-id room-comm-chan resp-chan))
-           (loop (hash-set room-lookup room-id room-chan) score-lookup)]))))
+           (loop (hash-set room-lookup room-id room-chan) score-lookup)]
+          [(user-join-room user-id room-id resp-chan)
+           (define room-chan (hash-ref room-lookup room-id))
+           (channel-put room-chan msg)
+           (loop room-lookup score-lookup)]))))
   user-comm-chan)
 
 
@@ -434,6 +450,16 @@
         [(create-room id)
          (define room-recv-chan (make-channel))
          (channel-put lobby-chan (user-create-room id room-recv-chan))
+         (define server-msg (channel-get room-recv-chan))
+
+         (match server-msg
+           [(user-room room-id room-chan)
+            (write (room room-id) output-port)
+            (close-ports input-port output-port)])]
+
+        [(join-room user-id room-id)
+         (define room-recv-chan (make-channel))
+         (channel-put lobby-chan (user-join-room user-id room-id room-recv-chan))
          (define server-msg (channel-get room-recv-chan))
 
          (match server-msg
