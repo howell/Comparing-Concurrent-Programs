@@ -30,7 +30,8 @@
 
   ;; Functions
   remove-tcp-buffer
-  close-ports)
+  close-ports
+  intern-symbol)
 
 ;; Constants
 (define CONNECT-PORT 8900) ;; the port number that the server listens to
@@ -122,3 +123,7 @@
 (define (close-ports input output)
   (close-input-port input)
   (close-output-port output))
+
+;; Symbol -> Symbol
+(define (intern-symbol sym)
+  (string->symbol (symbol->string sym)))

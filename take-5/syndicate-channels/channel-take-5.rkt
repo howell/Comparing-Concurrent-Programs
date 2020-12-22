@@ -392,7 +392,7 @@
            (channel-put resp-chan (results user-results))
            (loop room-lookup score-lookup)]
           [(user-create-room id resp-chan)
-           (define room-id (gensym id))
+           (define room-id (intern-symbol (gensym id)))
            (define room-chan (make-room room-id room-comm-chan resp-chan))
            (loop (hash-set room-lookup room-id room-chan) score-lookup)]
           [(user-join-room user-id room-id resp-chan)
@@ -503,13 +503,13 @@
         (define msg (channel-get auth-chan))
         (match msg
           [(user-register id user-chan)
-           (define user-token (gensym id))
+           (define user-token (intern-symbol (gensym id)))
            (channel-put user-chan (registered user-token))
            (define new-tokens (hash-set user-tokens id user-token))
            (write-to-file new-tokens auth-db #:exists 'replace)
            (loop new-tokens (hash-set user-comms id user-chan))]
           [(login id token)
-           (when (string=? (symbol->string token) (symbol->string (hash-ref user-tokens id)))
+           (when (symbol=? token (hash-ref user-tokens id))
              (channel-put (hash-ref user-comms id) (user-logged-in lobby-chan))
              (loop user-tokens user-comms))]))))
   auth-chan)

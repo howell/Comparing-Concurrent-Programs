@@ -45,7 +45,7 @@
   (define-values (i o) (create-connection))
   (remove-tcp-buffer i o)
 
-  (sleep 10) ;; FIXME race due to spawning reader thread for syndicate driver
+  (sleep 5) ;; FIXME race due to spawning reader thread for syndicate driver
 
   (define token (authenticate user-id i o))
 
@@ -53,8 +53,8 @@
   (define rooms-msg (read i))
 
   (write (join-room user-id (first (rooms-items rooms-msg))) o)
-
   (define confirmation-msg (read i))
+
   (printf "Room ~a has been successfully joined!\n" (room-id confirmation-msg))
 
   (close-ports i o))
