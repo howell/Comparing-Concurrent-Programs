@@ -429,6 +429,16 @@
          (match server-msg
            [(results items)
             (write server-msg output-port)
+            (loop)])]
+
+        [(create-room id)
+         (define room-recv-chan (make-channel))
+         (channel-put lobby-chan (user-create-room id room-chan))
+         (define server-msg (channel-get room-chan))
+
+         (match server-msg
+           [(user-room room-id room-chan)
+            (write (room room-id) output-port)
             (close-ports input-port output-port)])])))
 
   ;; Register the client with a user account
