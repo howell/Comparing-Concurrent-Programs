@@ -27,10 +27,6 @@
 
 ;; UserID -> Void
 (define (create-client user-id)
-  ;; connect to the client
-  ;; send the client a Register message
-  ;; wait for a Registered message
-  ;; end
   (define-values (i o) (create-connection))
   (remove-tcp-buffer i o)
 
@@ -42,6 +38,24 @@
   (define room-msg (read i))
 
   (printf "Newly-created room: ~a\n" (room-id room-msg))
+
+  (close-ports i o))
+
+(define (create-joining-client user-id)
+  (define-values (i o) (create-connection))
+  (remove-tcp-buffer i o)
+
+  (sleep 10) ;; FIXME race due to spawning reader thread for syndicate driver
+
+  (define token (authenticate user-id i o))
+
+  (write (list-rooms user-id) o)
+  (define rooms-msg (read i))
+
+  (write (join-room user-id (first (rooms-items rooms-msg))) o)
+
+  (define confirmation-msg (read i))
+  (printf "Room ~a has been successfully joined!\n" (room-id confirmation-msg))
 
   (close-ports i o))
 
@@ -61,7 +75,7 @@
 
   ;; Return the token for future use
   token)
-  
+
 
 ;; PlayerID GamePlayer -> void
 ;; (define (create-client player-name make-decision)
@@ -89,5 +103,7 @@
 (define (random-player hand rows)
   (random-ref hand))
 
-(command-line #:args (name)
-              (create-client (string->symbol name)))
+(command-line #:args (name creator?)
+              (if (string=? creator? "yes")
+                (create-client (string->symbol name))
+                (create-joining-client (string->symbol name))))
