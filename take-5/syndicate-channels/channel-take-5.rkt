@@ -31,6 +31,9 @@
 ;; a UserGetResults is a (user-get-results UserID [Chan-of LobbyMsg])
 (struct user-get-results (id chan) #:transparent)
 
+;; a UserRoom is a (user-room RoomID [Chan-of HostRoomMsg]) ;; FIXME need to define HostRoomMsg as well
+(struct user-room (id chan) #:transparent)
+
 ;; a DeclaredWinners is a (declared-winner/s [List-of PlayerID])
 (struct declared-winner/s (player/s) #:transparent)
 
@@ -340,6 +343,15 @@
       (handle-evt 
         accept-timeout
         (λ (_) #f)))))
+
+(define (make-room room-id lobby-chan host-chan)
+  (thread
+    (thunk
+      (define lobby-recv-chan (make-channel))
+      (define host-recv-chan (make-channel))
+
+      (channel-put host-chan (user-room room-id host-recv-chan)))))
+      
 
 (define (make-lobby)
   (define user-comm-chan (make-channel))
