@@ -38,15 +38,10 @@
 
   (define token (authenticate user-id i o))
 
-  (write (list-rooms user-id) o)
-  (define rooms-msg (read i))
+  (write (create-room user-id) o)
+  (define room-msg (read i))
 
-  (printf "Current rooms available: ~a\n" (rooms-items rooms-msg))
-
-  (write (get-results user-id) o)
-  (define results-msg (read i))
-
-  (printf "Game results: ~a\n" (results-items results-msg)) 
+  (printf "Newly-created room: ~a\n" (room-id room-msg))
 
   (close-ports i o))
 

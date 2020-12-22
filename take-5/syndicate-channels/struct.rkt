@@ -72,6 +72,12 @@
 ;; a Results is a (results [List-of Result])
 (struct results (items) #:prefab) ;; FIXME I don't like `items`
 
+;; a CreateRoom is a (create-room UserID)
+(struct create-room (user) #:prefab)
+
+;; a Room is a (room RoomID) --> FIXME should the room have the creating UserID? probably not
+(struct room (id) #:prefab)
+
 ;; a DeclarePlayer is a (declare-player PlayerID)
 (struct declare-player (id) #:prefab)
 
