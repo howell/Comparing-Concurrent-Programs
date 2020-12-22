@@ -31,6 +31,9 @@
 ;; a UserGetResults is a (user-get-results UserID [Chan-of LobbyMsg])
 (struct user-get-results (id chan) #:transparent)
 
+;; a UserCreateRoom is a (user-create-room UserID [Chan-of RoomMsg]) ;; FIXME should it be RoomMsg or LobbyMsg?
+(struct user-create-room (id chan) #:transparent)
+
 ;; a UserRoom is a (user-room RoomID [Chan-of HostRoomMsg]) ;; FIXME need to define HostRoomMsg as well
 (struct user-room (id chan) #:transparent)
 
@@ -345,16 +348,19 @@
         (λ (_) #f)))))
 
 (define (make-room room-id lobby-chan host-chan)
+  (define lobby-recv-chan (make-channel))
+  (define host-recv-chan (make-channel))
+
   (thread
     (thunk
-      (define lobby-recv-chan (make-channel))
-      (define host-recv-chan (make-channel))
+      (channel-put host-chan (user-room room-id host-recv-chan))))
 
-      (channel-put host-chan (user-room room-id host-recv-chan)))))
+  lobby-recv-chan)
       
 
 (define (make-lobby)
   (define user-comm-chan (make-channel))
+  (define room-comm-chan (make-channel))
 
   (thread
     (thunk
@@ -372,7 +378,11 @@
                (result room-id scores)))
 
            (channel-put resp-chan (results user-results))
-           (loop room-lookup score-lookup)]))))
+           (loop room-lookup score-lookup)]
+          [(user-create-room id resp-chan)
+           (define room-id (gensym id))
+           (define room-chan (make-room room-id room-comm-chan resp-chan))
+           (loop (hash-set room-lookup room-id room-chan) score-lookup)]))))
   user-comm-chan)
 
 
