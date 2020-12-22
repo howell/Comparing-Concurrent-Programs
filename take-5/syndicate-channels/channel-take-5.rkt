@@ -433,8 +433,8 @@
 
         [(create-room id)
          (define room-recv-chan (make-channel))
-         (channel-put lobby-chan (user-create-room id room-chan))
-         (define server-msg (channel-get room-chan))
+         (channel-put lobby-chan (user-create-room id room-recv-chan))
+         (define server-msg (channel-get room-recv-chan))
 
          (match server-msg
            [(user-room room-id room-chan)

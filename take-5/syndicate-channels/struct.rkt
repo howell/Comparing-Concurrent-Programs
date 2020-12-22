@@ -18,6 +18,8 @@
   (struct-out get-results)
   (struct-out result)
   (struct-out results)
+  (struct-out create-room)
+  (struct-out room)
 
   ;; Constants
   CONNECT-PORT
