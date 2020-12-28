@@ -44,33 +44,33 @@
 ;; a DeclaredWinners is a (declared-winner/s [List-of PlayerID])
 (struct declared-winner/s (player/s) #:transparent)
 
-;;;;;;;;;;; Protocol ;;;;;;;;;;;;;;;
-
-;; NOTE should messages fail silently or always some ack?
-
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;; Protocol ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Authentication Manager Conversations
+;; ------------------------------------
 ;; There is a conversation about registration.
 ;; Users register for a user account by sending a UserRegister message to the 
 ;; Authentication Manager, including the UserID of the User and the Channel on 
-;; which to receive authentication replies from the Authentication Manager.
-;; The Authentication Manager replies with a Registered message, containing the
-;; UserToken corresponding to the User that the User must use to log into their
-;; user account.
+;; which to receive replies. The Authentication manager sends back a UserRegistered
+;; message, containing the UserToken corresponding to the User that that User must
+;; use to Log-in, and a new channel for all future communication.
 ;; 
-;; There is a conversation about Login.
+;; There is a conversation about login.
 ;; Users send a Login message to the Authentication Manager containing their UserID
-;; and their UserToken. If the UserToken correctly corresponds to the UserID, then
-;; the Authentication Manager responds with a UserLoggedIn message, containing the
-;; Channel of the Lobby.
+;; and their UserToken. If the UserToken correctly corresponds to the UserID, then the
+;; Authentication Manager sends a CreateSession message to the Protected Component,
+;; containing the UserID of the User logging in. The Protected Component sends back
+;; a SessionCreated message, containing a Channel for communication with a User. The
+;; Authentication Manager forwards this channel to the user in a UserLoggedIn message.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Lobby Conversations
+;; -------------------
+;; There is a conversation about the open Rooms in the Lobby.
+;; To view the rooms that are available to join in the Lobby, a User sends a
+;; UserListRooms message to the Lobby, containing the UserID of the User. The
+;; Lobby responds with a Rooms message, containing a List of RoomIDs.
 ;;
-;; To view rooms available to join in the lobby, a User sends a UserListRooms message
-;; to the Lobby, containing a Channel for receiving Lobby replies. The Lobby replies
-;; with a Rooms message, containing a List of RoomIDs.
-;;
-;; To view the results of games played by a User, a User sends a UserGetResults to
-;; the Lobby, containing the UserID of the User and a Channel for the Lobby to send
-;; replies to. The Lobby replies with a Results message, containing a List-of Result
-;; structs, where each Scores hash contains the UserID as a key (representing a game
-;; the User participated in).
 
 
 ;;
