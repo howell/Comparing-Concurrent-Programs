@@ -25,8 +25,8 @@
 ;; a UserLoggedIn is a (user-logged-in [Chan-of LobbyMsg])
 (struct user-logged-in (lobby-chan) #:transparent)
 
-;; a UserListRooms is a (user-list-rooms [Chan-of LobbyMsg])
-(struct user-list-rooms (chan) #:transparent)
+;; a UserListRooms is a (user-list-rooms UserID [Chan-of LobbyMsg])
+(struct user-list-rooms (id chan) #:transparent)
 
 ;; a UserGetResults is a (user-get-results UserID [Chan-of LobbyMsg])
 (struct user-get-results (id chan) #:transparent)
@@ -382,8 +382,10 @@
                  [score-lookup (hash)]) ;; [Hash-of RoomID Scores]
         (define msg (channel-get user-comm-chan))
         (match msg
-          [(user-list-rooms resp-chan)
-           (channel-put resp-chan (rooms (hash-keys room-lookup)))
+          [(user-list-rooms user-id resp-chan)
+           (define room-list (hash-keys room-lookup))
+           (log-list-rooms user-id room-list)
+           (channel-put resp-chan (rooms room-list))
            (loop room-lookup score-lookup)]
           [(user-get-results id resp-chan)
            (define user-results
@@ -430,13 +432,11 @@
       (define client-msg (read input-port))
       (match client-msg
         [(list-rooms id)
-         (log-list-rooms id)
-         (channel-put lobby-chan (user-list-rooms recv-lobby-chan))
+         (channel-put lobby-chan (user-list-rooms id recv-lobby-chan))
          (define server-msg (channel-get recv-lobby-chan))
 
          (match server-msg
            [(rooms items)
-            (log-rooms items)
             (write server-msg output-port)
             (loop)])]
 
@@ -477,7 +477,6 @@
 
     (match server-msg
       [(registered token)
-       (log-registration id)
        (write server-msg output-port)]))
 
   ;; UserID UserToken -> Void
@@ -487,7 +486,6 @@
 
     (match server-msg
       [(user-logged-in lobby-chan)
-       (log-login id)
        (write (logged-in) output-port)
        lobby-chan]))
 
@@ -505,12 +503,14 @@
         (define msg (channel-get auth-chan))
         (match msg
           [(user-register id user-chan)
+           (log-registration id)
            (define user-token (intern-symbol (gensym id)))
            (channel-put user-chan (registered user-token))
            (define new-tokens (hash-set user-tokens id user-token))
            (write-to-file new-tokens auth-db #:exists 'replace)
            (loop new-tokens (hash-set user-comms id user-chan))]
           [(login id token)
+           (log-login id)
            (when (symbol=? token (hash-ref user-tokens id))
              (channel-put (hash-ref user-comms id) (user-logged-in lobby-chan))
              (loop user-tokens user-comms))]))))
