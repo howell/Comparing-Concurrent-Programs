@@ -333,9 +333,6 @@
 ;;;;;;;;;;;;;;;;; EXTENDED VERSION ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define (create-clients listener auth-chan)
-  (define accept-deadline (+ (current-inexact-milliseconds) CONN-DURATION))
-  (define accept-timeout (alarm-evt accept-deadline))
-
   (let loop ()
     (define accept-evt (tcp-accept-evt listener))
     (sync
@@ -346,10 +343,7 @@
            (log-connection)
            (remove-tcp-buffer input output)
            (make-user input output auth-chan)
-           (loop)]))
-      (handle-evt 
-        accept-timeout
-        (λ (_) #f)))))
+           (loop)])))))
 
 (define (make-room room-id lobby-chan host-chan)
   (define lobby-recv-chan (make-channel))
