@@ -18,8 +18,17 @@
 ;; a PlayerStruct is a (player PlayerID [Chan-of Round])
 (struct player (id chan) #:transparent)
 
-;; a UserRegister is a (user-register PlayerID [Chan-of (U Registered UserLoggedIn)])
+;; a UserRegister is a (user-register PlayerID [Chan-of FirstMsg]) ;; FIXME what is a FirstMsg?
 (struct user-register (id chan) #:transparent)
+
+;; a UserRegistered is a (user-registered Token [Chan-of Login])
+(struct user-registered (token chan) #:transparent)
+
+;; a CreateSession is a (create-session UserID)
+(struct create-session (user) #:transparent)
+
+;; a SessionCreated is a (session-created [Chan-of LobbyMsg])
+(struct session-created (chan) #:transparent)
 
 ;; FIXME need to define LobbyMsg
 ;; a UserLoggedIn is a (user-logged-in [Chan-of LobbyMsg])
@@ -355,7 +364,7 @@
       (channel-put host-chan (user-room room-id host-recv-chan))
 
       (let loop ([guests '()]) ;; [Hash-of UserID Chan]
-        (define guest-evts (apply choice-evt guests))
+        (define guest-evts (apply choice-evt guests)) ;; FIXME no way this works, right?
         (sync
           (handle-evt
             guest-evts
@@ -409,8 +418,8 @@
 ;; FIXME is this a good design?
 ;; Create a User component that communicates with the client over TCP
 ;; Port Port -> Void
-(define (make-user input-port output-port auth-chan)
-  (define recv-auth-chan (make-channel))
+(define (make-user input-port output-port register-chan)
+  (define recv-chan (make-channel))
   (define recv-lobby-chan (make-channel))
 
   ;; Handle communication while client authenticating 
@@ -419,11 +428,14 @@
     (define client-msg (read input-port))
     (match client-msg
       [(register user-id)
-       (register-user user-id)
-       (handle-auth-comm)]
+       (define auth-chan (register-user user-id))]))
+
+  (define (handle-login auth-chan)
+    (define client-msg (read input-port))
+    (match client-msg
       [(login user-id token)
-       (define lobby-chan (log-in-user user-id token))
-       (handle-lobby-comm lobby-chan)]))
+       (define lobby-chan (log-in-user user-id token auth-chan))
+       (close-ports input-port output-port)]))
 
   ;; Handle communication between client and lobby
   ;; Chan -> Void
@@ -472,15 +484,16 @@
   ;; Register the client with a user account
   ;; UserID -> Void
   (define (register-user id)
-    (channel-put auth-chan (user-register id recv-auth-chan))
-    (define server-msg (channel-get recv-auth-chan))
+    (channel-put register-chan (user-register id recv-chan))
+    (define server-msg (channel-get recv-chan))
 
     (match server-msg
-      [(registered token)
-       (write server-msg output-port)]))
+      [(user-registered token user-auth-chan)
+       (write (registered token) output-port)
+       user-auth-chan]))
 
-  ;; UserID UserToken -> Void
-  (define (log-in-user id token)
+  ;; UserID UserToken [Chan-of Login] -> Void
+  (define (log-in-user id token auth-chan)
     (channel-put auth-chan (login id token))
     (define server-msg (channel-get recv-auth-chan))
 
@@ -494,27 +507,44 @@
       (handle-auth-comm))))
 
 ;; Chan -> Chan
-(define (make-authentication-manager lobby-chan auth-db)
-  (define auth-chan (make-channel))
+(define (make-authentication-manager lobby-chan)
+  (define register-chan (make-channel))
+
   (thread
     (thunk
       (let loop ([user-tokens (hash)] ;; [Hash-of UserID UserToken]
-                 [user-comms (hash)]) ;; [Hash-of UserID [Chan-of (U Registered LoggedIn)]]
-        (define msg (channel-get auth-chan))
-        (match msg
-          [(user-register id user-chan)
-           (log-registration id)
-           (define user-token (intern-symbol (gensym id)))
-           (channel-put user-chan (registered user-token))
-           (define new-tokens (hash-set user-tokens id user-token))
-           (write-to-file new-tokens auth-db #:exists 'replace)
-           (loop new-tokens (hash-set user-comms id user-chan))]
-          [(login id token)
-           (log-login id)
-           (when (symbol=? token (hash-ref user-tokens id))
-             (channel-put (hash-ref user-comms id) (user-logged-in lobby-chan))
-             (loop user-tokens user-comms))]))))
-  auth-chan)
+                 [user-comms (hash)]) ;; [Hash-of UserID [Chan-of AuthMsg]] FIXME what is an AuthMsg?
+
+        (define (handle-login msg)
+          (match msg
+            [(login id token)
+             (log-login id)
+             (when (symbol=? token (hash-ref user-tokens id))
+               (channel-put lobby-chan (create-session id))
+               (match (channel-get lobby-chan)
+                 [(session-created user-lobby-chan)
+                  (channel-put (hash-ref user-comms id) (user-logged-in user-lobby-chan))
+                  (loop user-tokens user-comms)]))]))
+
+        (define login-evts
+          (apply choice-evt
+                 (map (λ (chan) (handle-evt chan handle-login))
+                      (hash-values user-comms))))
+
+        (sync
+          login-evts
+          (handle-evt
+            register-chan
+            (match-lambda
+              [(user-register id user-chan)
+               (log-registration id)
+
+               (define user-token (intern-symbol (gensym id)))
+               (define user-auth-chan (make-channel))
+               (channel-put user-chan (registered user-token user-auth-chan))
+               (loop (hash-set user-tokens id user-token)
+                     (hash-set user-comms id user-auth-chan))]))))))
+  register-chan)
 
 (define general-chan (make-channel))
 (define lobby-chan (make-lobby))
