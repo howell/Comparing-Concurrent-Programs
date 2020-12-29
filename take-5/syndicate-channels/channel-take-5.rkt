@@ -387,7 +387,7 @@
   (thread
     (thunk
       (let loop ([sessions (hash)]) ;; [Hash-of UserID Chan]
-        (define auth-msg (make-channel))
+        (define auth-msg (channel-get auth-comm-chan))
         (match auth-msg
           [(create-session user-id)
            (define user-comm-chan (make-channel))
@@ -435,7 +435,8 @@
     (define client-msg (read input-port))
     (match client-msg
       [(register user-id)
-       (define auth-chan (register-user user-id))]))
+       (define auth-chan (register-user user-id))
+       (handle-login auth-chan)]))
 
   (define (handle-login auth-chan)
     (define client-msg (read input-port))
@@ -502,7 +503,7 @@
   ;; UserID UserToken [Chan-of Login] -> Void
   (define (log-in-user id token auth-chan)
     (channel-put auth-chan (login id token))
-    (define server-msg (channel-get recv-auth-chan))
+    (define server-msg (channel-get auth-chan))
 
     (match server-msg
       [(user-logged-in lobby-chan)
@@ -528,7 +529,8 @@
              (log-login id)
              (when (symbol=? token (hash-ref user-tokens id))
                (channel-put lobby-chan (create-session id))
-               (match (channel-get lobby-chan)
+               (define lobby-msg (channel-get lobby-chan))
+               (match lobby-msg
                  [(session-created user-lobby-chan)
                   (channel-put (hash-ref user-comms id) (user-logged-in user-lobby-chan))
                   (loop user-tokens user-comms)]))]))
@@ -548,17 +550,16 @@
 
                (define user-token (intern-symbol (gensym id)))
                (define user-auth-chan (make-channel))
-               (channel-put user-chan (registered user-token user-auth-chan))
+               (channel-put user-chan (user-registered user-token user-auth-chan))
                (loop (hash-set user-tokens id user-token)
                      (hash-set user-comms id user-auth-chan))]))))))
   register-chan)
 
 (define general-chan (make-channel))
 (define lobby-chan (make-lobby))
-
 (define server (tcp-listen CONNECT-PORT))
 
 (define auth-chan (make-authentication-manager lobby-chan))
 (create-clients server auth-chan)
 
-(channel-get lobby-chan)
+(channel-get general-chan)

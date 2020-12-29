@@ -33,11 +33,12 @@
   (sleep 1) ;; FIXME race due to spawning reader thread for syndicate driver
 
   (define token (authenticate user-id i o))
+  (printf "login token is: ~a\n" token)
 
-  (write (create-room user-id) o)
-  (define room-msg (read i))
+  ;; (write (create-room user-id) o)
+  ;; (define room-msg (read i))
 
-  (printf "Newly-created room: ~a\n" (room-id room-msg))
+  ;; (printf "Newly-created room: ~a\n" (room-id room-msg))
 
   (close-ports i o))
 
