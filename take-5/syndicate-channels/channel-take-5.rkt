@@ -47,6 +47,21 @@
 ;; a DeclaredWinners is a (declared-winner/s [List-of PlayerID])
 (struct declared-winner/s (player/s) #:transparent)
 
+;; a Select is a (select Symbol Chan)
+(struct select (key reply-chan) #:transparent)
+
+;; a Data is a (data Any)
+(struct data (contents) #:transparent)
+
+;; an Insert is an (insert Symbol Any Chan)
+(struct insert (key val reply-chan) #:transparent)
+
+;; an Acknowledgement is an (ack)
+(struct ack () #:transparent)
+
+(define LOGIN-INFO 'login-info)
+(define RESULTS-INFO 'results-info)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;; Protocol ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -66,6 +81,7 @@
 ;; containing the UserID of the User logging in. The Protected Component sends back
 ;; a SessionCreated message, containing a Channel for communication with a User. The
 ;; Authentication Manager forwards this channel to the user in a UserLoggedIn message.
+;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Lobby Conversations
 ;; -------------------
@@ -78,6 +94,23 @@
 ;; To view past game results, a User sends a GetResults message to the Lobby,
 ;; containing the User's UserID. The Lobby replies with a Results message, containing
 ;; a List of Scores where each Scores contains the User's UserID as a key.
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Persistence Conversations
+;; -------------------------
+;; There are two participants in a persistence conversation: the Database that stores,
+;; updates and retrieves data, and a Client that makes requests of the Database.
+;;
+;; There is a conversation about fetching data.
+;; A Client fetches data with a Select message, containing a symbol and the channel
+;; on which to receive replies from the Database. The Database responds with a Data
+;; message, containing the data associated with that symbol.
+;;
+;; There is a conversation about updating data.
+;; A Client inserts or updates data by sending an Insert message, containing a symbol,
+;; data to associate with that symbol, and a channel on which to send replies. The
+;; Database replies with an Acknowledgement message.
+;; 
 
 
 
@@ -519,8 +552,9 @@
       (handle-auth-comm))))
 
 ;; Chan -> Chan
-(define (make-authentication-manager lobby-chan)
+(define (make-authentication-manager lobby-chan db-chan)
   (define register-chan (make-channel))
+  (define db-recv-chan (make-channel))
 
   (thread
     (thunk
@@ -553,17 +587,44 @@
                (log-registration id)
 
                (define user-token (intern-symbol (gensym id)))
-               (define user-auth-chan (make-channel))
-               (channel-put user-chan (user-registered user-token user-auth-chan))
-               (loop (hash-set user-tokens id user-token)
-                     (hash-set user-comms id user-auth-chan))]))))))
+               (define new-tokens (hash-set user-tokens id user-token))
+               (channel-put db-chan (insert LOGIN-INFO new-tokens db-recv-chan))
+
+               (define db-msg (channel-get db-recv-chan))
+               (match db-msg
+                 [(ack)
+                  (define user-auth-chan (make-channel))
+                  (channel-put user-chan (user-registered user-token user-auth-chan))
+                  (loop new-tokens
+                        (hash-set user-comms id user-auth-chan))])]))))))
   register-chan)
 
+;; TODO reload the DB when this opens up
+(define (make-database db)
+  (define db-chan (make-channel))
+
+  (thread
+    (thunk
+      (let loop ([data-contents (hash)]) ;; [Hash-of Symbol Any]
+        (define db-msg (channel-get db-chan))
+        (match db-msg
+          [(select key reply-chan)
+           (channel-put reply-chan (data (hash-ref data-contents key #f)))
+           (loop data)]
+          [(insert key val reply-chan)
+           (define new-contents (hash-set data-contents key val))
+           (write-to-file new-contents db #:exists 'replace)
+           (channel-put reply-chan (ack))
+           (loop new-contents)]))))
+
+  db-chan)
+
 (define general-chan (make-channel))
+(define db-chan (make-database "db.info"))
 (define lobby-chan (make-lobby))
 (define server (tcp-listen CONNECT-PORT))
 
-(define auth-chan (make-authentication-manager lobby-chan))
+(define auth-chan (make-authentication-manager lobby-chan db-chan))
 (create-clients server auth-chan)
 
 (channel-get general-chan)
