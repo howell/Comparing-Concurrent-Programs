@@ -382,37 +382,44 @@
   lobby-recv-chan)
 
 (define (make-lobby)
-  (define user-comm-chan (make-channel))
-  (define room-comm-chan (make-channel))
+  (define auth-comm-chan (make-channel))
 
   (thread
     (thunk
-      (let loop ([room-lookup (hash)]   ;; [Hash-of RoomID Chan]
-                 [score-lookup (hash)]) ;; [Hash-of RoomID Scores]
-        (define msg (channel-get user-comm-chan))
-        (match msg
-          [(user-list-rooms user-id resp-chan)
-           (define room-list (hash-keys room-lookup))
-           (log-list-rooms user-id room-list)
-           (channel-put resp-chan (rooms room-list))
-           (loop room-lookup score-lookup)]
-          [(user-get-results id resp-chan)
-           (define user-results
-             (for/list ([(room-id scores) (in-hash score-lookup)]
-                        #:when (hash-has-key? scores id))
-               (result room-id scores)))
+      (let loop ([sessions (hash)]) ;; [Hash-of UserID Chan]
+        (define auth-msg (make-channel))
+        (match auth-msg
+          [(create-session user-id)
+           (define user-comm-chan (make-channel))
+           (channel-put auth-comm-chan (session-created user-comm-chan))
+           (loop (hash-set sessions user-id user-comm-chan))]))))
 
-           (channel-put resp-chan (results user-results))
-           (loop room-lookup score-lookup)]
-          [(user-create-room id resp-chan)
-           (define room-id (intern-symbol (gensym id)))
-           (define room-chan (make-room room-id room-comm-chan resp-chan))
-           (loop (hash-set room-lookup room-id room-chan) score-lookup)]
-          [(user-join-room user-id room-id resp-chan)
-           (define room-chan (hash-ref room-lookup room-id))
-           (channel-put room-chan msg)
-           (loop room-lookup score-lookup)]))))
-  user-comm-chan)
+      ;; (let loop ([room-lookup (hash)]   ;; [Hash-of RoomID Chan]
+      ;;            [score-lookup (hash)]) ;; [Hash-of RoomID Scores]
+      ;;   (define msg (channel-get user-comm-chan))
+      ;;   (match msg
+      ;;     [(user-list-rooms user-id resp-chan)
+      ;;      (define room-list (hash-keys room-lookup))
+      ;;      (log-list-rooms user-id room-list)
+      ;;      (channel-put resp-chan (rooms room-list))
+      ;;      (loop room-lookup score-lookup)]
+      ;;     [(user-get-results id resp-chan)
+      ;;      (define user-results
+      ;;        (for/list ([(room-id scores) (in-hash score-lookup)]
+      ;;                   #:when (hash-has-key? scores id))
+      ;;          (result room-id scores)))
+
+      ;;      (channel-put resp-chan (results user-results))
+      ;;      (loop room-lookup score-lookup)]
+      ;;     [(user-create-room id resp-chan)
+      ;;      (define room-id (intern-symbol (gensym id)))
+      ;;      (define room-chan (make-room room-id room-comm-chan resp-chan))
+      ;;      (loop (hash-set room-lookup room-id room-chan) score-lookup)]
+      ;;     [(user-join-room user-id room-id resp-chan)
+      ;;      (define room-chan (hash-ref room-lookup room-id))
+      ;;      (channel-put room-chan msg)
+      ;;      (loop room-lookup score-lookup)]))))
+  auth-comm-chan)
 
 
 ;; FIXME is this a good design?
@@ -551,7 +558,7 @@
 
 (define server (tcp-listen CONNECT-PORT))
 
-(define auth-chan (make-authentication-manager lobby-chan "login.info"))
+(define auth-chan (make-authentication-manager lobby-chan))
 (create-clients server auth-chan)
 
 (channel-get lobby-chan)
