@@ -34,12 +34,6 @@
 ;; a UserLoggedIn is a (user-logged-in [Chan-of LobbyMsg])
 (struct user-logged-in (lobby-chan) #:transparent)
 
-;; a UserListRooms is a (user-list-rooms UserID [Chan-of LobbyMsg])
-(struct user-list-rooms (id chan) #:transparent)
-
-;; a UserGetResults is a (user-get-results UserID [Chan-of LobbyMsg])
-(struct user-get-results (id chan) #:transparent)
-
 ;; I don't know what RoomMsg means anymore
 ;; a UserCreateRoom is a (user-create-room UserID [Chan-of RoomMsg]) ;; FIXME should it be RoomMsg or LobbyMsg?
 (struct user-create-room (id chan) #:transparent)
@@ -386,31 +380,45 @@
 
   (thread
     (thunk
-      (let loop ([sessions (hash)]) ;; [Hash-of UserID Chan]
-        (define auth-msg (channel-get auth-comm-chan))
-        (match auth-msg
-          [(create-session user-id)
-           (define user-comm-chan (make-channel))
-           (channel-put auth-comm-chan (session-created user-comm-chan))
-           (loop (hash-set sessions user-id user-comm-chan))]))))
+      (let loop ([sessions (hash)]      ;; [Hash-of UserID Chan]
+                 [room-lookup (hash)]   ;; [Hash-of RoomID Chan]
+                 [score-lookup (hash)]) ;; [Hash-of RoomID Scores]
 
-      ;; (let loop ([room-lookup (hash)]   ;; [Hash-of RoomID Chan]
-      ;;            [score-lookup (hash)]) ;; [Hash-of RoomID Scores]
-      ;;   (define msg (channel-get user-comm-chan))
-      ;;   (match msg
-      ;;     [(user-list-rooms user-id resp-chan)
-      ;;      (define room-list (hash-keys room-lookup))
-      ;;      (log-list-rooms user-id room-list)
-      ;;      (channel-put resp-chan (rooms room-list))
-      ;;      (loop room-lookup score-lookup)]
-      ;;     [(user-get-results id resp-chan)
-      ;;      (define user-results
-      ;;        (for/list ([(room-id scores) (in-hash score-lookup)]
-      ;;                   #:when (hash-has-key? scores id))
-      ;;          (result room-id scores)))
+        (define (handle-user-evt msg)
+          (match msg
+            [(list-rooms user-id)
+             (define room-list (hash-keys room-lookup))
+             (log-list-rooms user-id room-list)
+             (channel-put (hash-ref sessions user-id) (rooms room-list))
+             (loop sessions room-lookup score-lookup)]
 
-      ;;      (channel-put resp-chan (results user-results))
-      ;;      (loop room-lookup score-lookup)]
+            [(get-results user-id)
+             (define user-results
+               (for/list ([(room-id scores) (in-hash score-lookup)]
+                           #:when (hash-has-key? scores user-id))
+                 (result room-id scores)))
+
+             ;; TODO add logging method
+             (channel-put (hash-ref sessions user-id) (results user-results))
+             (loop sessions room-lookup score-lookup)]))
+
+        (define user-evts
+          (apply choice-evt
+                 (map (λ (chan) (handle-evt chan handle-user-evt))
+                      (hash-values sessions))))
+
+        (sync
+          user-evts
+          (handle-evt
+            auth-comm-chan
+            (match-lambda
+              [(create-session user-id)
+               (define user-comm-chan (make-channel))
+               (channel-put auth-comm-chan (session-created user-comm-chan))
+               (loop (hash-set sessions user-id user-comm-chan)
+                     room-lookup
+                     score-lookup)]))))))
+
       ;;     [(user-create-room id resp-chan)
       ;;      (define room-id (intern-symbol (gensym id)))
       ;;      (define room-chan (make-room room-id room-comm-chan resp-chan))
@@ -427,7 +435,6 @@
 ;; Port Port -> Void
 (define (make-user input-port output-port register-chan)
   (define recv-chan (make-channel))
-  (define recv-lobby-chan (make-channel))
 
   ;; Handle communication while client authenticating 
   ;; -> Void
@@ -443,7 +450,7 @@
     (match client-msg
       [(login user-id token)
        (define lobby-chan (log-in-user user-id token auth-chan))
-       (close-ports input-port output-port)]))
+       (handle-lobby-comm lobby-chan)]))
 
   ;; Handle communication between client and lobby
   ;; Chan -> Void
@@ -452,8 +459,8 @@
       (define client-msg (read input-port))
       (match client-msg
         [(list-rooms id)
-         (channel-put lobby-chan (user-list-rooms id recv-lobby-chan))
-         (define server-msg (channel-get recv-lobby-chan))
+         (channel-put lobby-chan client-msg)
+         (define server-msg (channel-get lobby-chan))
 
          (match server-msg
            [(rooms items)
@@ -461,33 +468,34 @@
             (loop)])]
 
         [(get-results id)
-         (channel-put lobby-chan (user-get-results id recv-lobby-chan))
-         (define server-msg (channel-get recv-lobby-chan))
+         (channel-put lobby-chan client-msg)
+         (define server-msg (channel-get lobby-chan))
 
          (match server-msg
            [(results items)
             (write server-msg output-port)
             (loop)])]
 
-        [(create-room id)
-         (define room-recv-chan (make-channel))
-         (channel-put lobby-chan (user-create-room id room-recv-chan))
-         (define server-msg (channel-get room-recv-chan))
+        ;; [(create-room id)
+        ;;  (define room-recv-chan (make-channel))
+        ;;  (channel-put lobby-chan (user-create-room id room-recv-chan))
+        ;;  (define server-msg (channel-get room-recv-chan))
 
-         (match server-msg
-           [(user-room room-id room-chan)
-            (write (room room-id) output-port)
-            (close-ports input-port output-port)])]
+        ;;  (match server-msg
+        ;;    [(user-room room-id room-chan)
+        ;;     (write (room room-id) output-port)
+        ;;     (close-ports input-port output-port)])]
 
-        [(join-room user-id room-id)
-         (define room-recv-chan (make-channel))
-         (channel-put lobby-chan (user-join-room user-id room-id room-recv-chan))
-         (define server-msg (channel-get room-recv-chan))
+        ;; [(join-room user-id room-id)
+        ;;  (define room-recv-chan (make-channel))
+        ;;  (channel-put lobby-chan (user-join-room user-id room-id room-recv-chan))
+        ;;  (define server-msg (channel-get room-recv-chan))
 
-         (match server-msg
-           [(user-room room-id room-chan)
-            (write (room room-id) output-port)
-            (close-ports input-port output-port)])])))
+        ;;  (match server-msg
+        ;;    [(user-room room-id room-chan)
+        ;;     (write (room room-id) output-port)
+        ;;     (close-ports input-port output-port)])]
+        )))
 
   ;; Register the client with a user account
   ;; UserID -> Void

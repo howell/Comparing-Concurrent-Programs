@@ -35,10 +35,9 @@
   (define token (authenticate user-id i o))
   (printf "login token is: ~a\n" token)
 
-  ;; (write (create-room user-id) o)
-  ;; (define room-msg (read i))
-
-  ;; (printf "Newly-created room: ~a\n" (room-id room-msg))
+  (write (list-rooms user-id) o)
+  (define room-msg (read i))
+  (printf "available rooms: ~a\n" (rooms-items room-msg))
 
   (close-ports i o))
 
