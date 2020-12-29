@@ -74,17 +74,13 @@
 ;; UserListRooms message to the Lobby, containing the UserID of the User. The
 ;; Lobby responds with a Rooms message, containing a List of RoomIDs.
 ;;
+;; There is a conversation about the Results of games played by a User.
+;; To view past game results, a User sends a GetResults message to the Lobby,
+;; containing the User's UserID. The Lobby replies with a Results message, containing
+;; a List of Scores where each Scores contains the User's UserID as a key.
 
 
-;;
-;; There are multiple conversations between Users and the Lobby.
-;; To view rooms available to join in the Lobby, Users send a List Rooms message to
-;; the Lobby, containing the channel on which to send replies. The Lobby responds
-;; with a Rooms message, containing a list of unique Room IDs.
-;; 
-;; To view the results of games played by the User, the User sends a View Results
-;; message to the Lobby, containing the channel to send replies on. The Lobby replies
-;; with a Results message, containing a list of the Results of games played by the User.
+
 ;;
 ;; To create a room, Users send a Create Room message to the Lobby, containing
 ;; the User's channel. The Lobby creates a new Room component associated
