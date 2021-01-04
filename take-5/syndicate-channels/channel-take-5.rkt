@@ -34,10 +34,6 @@
 ;; a UserLoggedIn is a (user-logged-in [Chan-of LobbyMsg])
 (struct user-logged-in (lobby-chan) #:transparent)
 
-;; I don't know what RoomMsg means anymore
-;; a UserCreateRoom is a (user-create-room UserID [Chan-of RoomMsg]) ;; FIXME should it be RoomMsg or LobbyMsg?
-(struct user-create-room (id chan) #:transparent)
-
 ;; a UserJoinRoom is a (user-join-room UserID RoomID [Chan-of RoomMsg])
 (struct user-join-room (user id chan) #:transparent)
 
@@ -95,6 +91,12 @@
 ;; containing the User's UserID. The Lobby replies with a Results message, containing
 ;; a List of Scores where each Scores contains the User's UserID as a key.
 ;;
+;; There is a conversation about creating a room in the Lobby.
+;; To create a room, Users send a CreateRoom message to the Lobby, containing
+;; the UserID of the User. The newly-created Room uses that channel to send
+;; a UserRoom message, containing the RoomID of the Room and the channel on
+;; which the User and Room can communicate.
+;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Persistence Conversations
 ;; -------------------------
@@ -115,11 +117,6 @@
 
 
 
-;;
-;; To create a room, Users send a Create Room message to the Lobby, containing
-;; the User's channel. The Lobby creates a new Room component associated
-;; with a unique ID, and the Room sends a NewRoom message to the client, containing
-;; the ID of the Room and the channel of communication for the Room.
 ;; 
 ;; To join a room, Users send a Join Room message to the Lobby, containing the channel
 ;; of the User. The Lobby forwards the message to the Room, and the Room replies to
@@ -378,32 +375,29 @@
            (make-user input output auth-chan)
            (loop)])))))
 
-(define (make-room room-id lobby-chan host-chan)
-  (define lobby-recv-chan (make-channel))
-  (define host-recv-chan (make-channel))
-  (define guest-recv-chan (make-channel))
-
+(define (make-room room-id lobby-chan temp-host-chan)
   (thread
     (thunk
-      (channel-put host-chan (user-room room-id host-recv-chan))
+      (define host-chan (make-channel))
+      (channel-put temp-host-chan (user-room room-id host-chan))
 
-      (let loop ([guests '()]) ;; [Hash-of UserID Chan]
-        (define guest-evts (apply choice-evt guests)) ;; FIXME no way this works, right?
-        (sync
-          (handle-evt
-            guest-evts
-            (match-lambda
-              [(leave-room user-id)
-               (loop (hash-remove guests user-id))]))
-          (handle-evt
-            host-chan
-            (match-lambda
-              [(cancel-game)
-               (for ([(user-id chan) guests])
-                 (channel-put chan (game-cancelled room-id)))
-               (channel-put lobby-chan (game-cancelled room-id))]))))))
+      (let loop ([guests '()])
+        (loop guests)))))
 
-  lobby-recv-chan)
+        ;; (define guest-evts (apply choice-evt guests)) ;; FIXME no way this works, right?
+        ;; (sync
+        ;;   (handle-evt
+        ;;     guest-evts
+        ;;     (match-lambda
+        ;;       [(leave-room user-id)
+        ;;        (loop (hash-remove guests user-id))]))
+        ;;   (handle-evt
+        ;;     host-chan
+        ;;     (match-lambda
+        ;;       [(cancel-game)
+        ;;        (for ([(user-id chan) guests])
+        ;;          (channel-put chan (game-cancelled room-id)))
+        ;;        (channel-put lobby-chan (game-cancelled room-id))]))))))
 
 (define (make-lobby)
   (define auth-comm-chan (make-channel))
@@ -430,7 +424,13 @@
 
              ;; TODO add logging method
              (channel-put (hash-ref sessions user-id) (results user-results))
-             (loop sessions room-lookup score-lookup)]))
+             (loop sessions room-lookup score-lookup)]
+
+            [(create-room user-id)
+             (define room-id (intern-symbol (gensym user-id)))
+             (define room-chan (make-channel))
+             (make-room room-id room-chan (hash-ref sessions user-id))
+             (loop sessions (hash-set room-lookup room-id room-chan) score-lookup)]))
 
         (define user-evts
           (apply choice-evt
@@ -449,10 +449,6 @@
                      room-lookup
                      score-lookup)]))))))
 
-      ;;     [(user-create-room id resp-chan)
-      ;;      (define room-id (intern-symbol (gensym id)))
-      ;;      (define room-chan (make-room room-id room-comm-chan resp-chan))
-      ;;      (loop (hash-set room-lookup room-id room-chan) score-lookup)]
       ;;     [(user-join-room user-id room-id resp-chan)
       ;;      (define room-chan (hash-ref room-lookup room-id))
       ;;      (channel-put room-chan msg)
@@ -506,15 +502,14 @@
             (write server-msg output-port)
             (loop)])]
 
-        ;; [(create-room id)
-        ;;  (define room-recv-chan (make-channel))
-        ;;  (channel-put lobby-chan (user-create-room id room-recv-chan))
-        ;;  (define server-msg (channel-get room-recv-chan))
+        [(create-room id)
+         (channel-put lobby-chan (create-room id))
+         (define server-msg (channel-get lobby-chan))
 
-        ;;  (match server-msg
-        ;;    [(user-room room-id room-chan)
-        ;;     (write (room room-id) output-port)
-        ;;     (close-ports input-port output-port)])]
+         (match server-msg
+           [(user-room room-id room-chan)
+            (write (room room-id) output-port)
+            (close-ports input-port output-port)])]
 
         ;; [(join-room user-id room-id)
         ;;  (define room-recv-chan (make-channel))
