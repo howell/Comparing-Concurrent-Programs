@@ -104,7 +104,8 @@
 ;; There is a conversation about fetching data.
 ;; A Client fetches data with a Select message, containing a symbol and the channel
 ;; on which to receive replies from the Database. The Database responds with a Data
-;; message, containing the data associated with that symbol.
+;; message, containing the data associated with that symbol if it exists, and
+;; #f otherwise.
 ;;
 ;; There is a conversation about updating data.
 ;; A Client inserts or updates data by sending an Insert message, containing a symbol,
@@ -558,7 +559,15 @@
 
   (thread
     (thunk
-      (let loop ([user-tokens (hash)] ;; [Hash-of UserID UserToken]
+      (define (get-initial-tokens)
+        (channel-put db-chan (select LOGIN-INFO db-recv-chan))
+        (define db-resp (channel-get db-recv-chan))
+        (match db-resp
+          [(data d) (or d (hash))]))
+
+      (define initial-tokens (get-initial-tokens))
+
+      (let loop ([user-tokens initial-tokens] ;; [Hash-of UserID UserToken]
                  [user-comms (hash)]) ;; [Hash-of UserID [Chan-of AuthMsg]] FIXME what is an AuthMsg?
 
         (define (handle-login msg)
@@ -600,22 +609,28 @@
   register-chan)
 
 ;; TODO reload the DB when this opens up
-(define (make-database db)
+(define (make-database filename)
+  (define starting-db
+    (if (file-exists? filename)
+      (file->value filename)
+      (hash)))
+
   (define db-chan (make-channel))
 
   (thread
     (thunk
-      (let loop ([data-contents (hash)]) ;; [Hash-of Symbol Any]
+      (let loop ([db starting-db]) ;; [Hash-of Symbol Any]
         (define db-msg (channel-get db-chan))
         (match db-msg
           [(select key reply-chan)
-           (channel-put reply-chan (data (hash-ref data-contents key #f)))
-           (loop data)]
+           (channel-put reply-chan (data (hash-ref db key #f)))
+           (loop db)]
+
           [(insert key val reply-chan)
-           (define new-contents (hash-set data-contents key val))
-           (write-to-file new-contents db #:exists 'replace)
+           (define new-db (hash-set db key val))
+           (write-to-file new-db filename #:exists 'replace)
            (channel-put reply-chan (ack))
-           (loop new-contents)]))))
+           (loop new-db)]))))
 
   db-chan)
 
