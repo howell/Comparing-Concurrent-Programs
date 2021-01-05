@@ -101,6 +101,10 @@
 ;; a GameCancelled is a (game-cancelled RoomID)
 (struct game-cancelled (id) #:prefab)
 
+
+
+
+
 ;; a DeclarePlayer is a (declare-player PlayerID)
 (struct declare-player (id) #:prefab)
 

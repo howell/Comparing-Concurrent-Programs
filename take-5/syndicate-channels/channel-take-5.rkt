@@ -40,6 +40,9 @@
 ;; a UserRoom is a (user-room RoomID [Chan-of RoomMsg]) ;; FIXME should there be a difference in the reply to Host vs. Guest?
 (struct user-room (id chan) #:transparent)
 
+;; a RoomTerminated is a (room-terminated RoomID)
+(struct room-terminated (id) #:transparent)
+
 ;; a DeclaredWinners is a (declared-winner/s [List-of PlayerID])
 (struct declared-winner/s (player/s) #:transparent)
 
@@ -134,8 +137,12 @@
 ;;
 ;; There is a conversation about cancelling a game.
 ;; To cancel a game, the Host sends a CancelGame message to the Room. The Room sends
-;; a CancelledGame message to the Host and Guests, and the Room can no longer be
-;; communicated with from that point onward.
+;; a CancelledGame message to the Host and Guests, and a TerminatedRoom message to
+;; the Lobby, containing the Room's RoomID. The Room can no longer be communicated
+;; with from that point onward.
+;;
+;; There is a conversation about leaving a game.
+;; To leave a game, a Guest sends a LeaveGame message to the room.
 
 
 ;; 
@@ -406,6 +413,7 @@
             host-chan
             (match-lambda
               [(cancel-game)
+               (channel-put lobby-chan (room-terminated room-id))
                (channel-put host-chan (game-cancelled room-id))
                (for ([guest-chan guests])
                  (channel-put guest-chan (game-cancelled room-id)))])))))))
@@ -461,13 +469,25 @@
                              (room-not-found))])
              (loop sessions room-lookup score-lookup)]))
 
+        (define (handle-room-evt msg)
+          (match msg
+            [(room-terminated room-id)
+             (printf "removing room!\n")
+             (loop sessions (hash-remove room-lookup room-id) score-lookup)]))
+
         (define user-evts
           (apply choice-evt
                  (map (λ (chan) (handle-evt chan handle-user-evt))
                       (hash-values sessions))))
 
+        (define room-evts
+          (apply choice-evt
+                 (map (λ (chan) (handle-evt chan handle-room-evt))
+                      (hash-values room-lookup))))
+
         (sync
           user-evts
+          room-evts
           (handle-evt
             auth-comm-chan
             (match-lambda
