@@ -21,6 +21,7 @@
   (struct-out create-room)
   (struct-out join-room)
   (struct-out room)
+  (struct-out room-not-found)
   (struct-out leave-room)
   (struct-out cancel-game)
   (struct-out game-cancelled)
@@ -87,6 +88,9 @@
 
 ;; a Room is a (room RoomID) --> FIXME should the room have the creating UserID? probably not
 (struct room (id) #:prefab)
+
+;; a RoomNotFound is a (room-not-found)
+(struct room-not-found () #:prefab)
 
 ;; a LeaveRoom is a (leave-room UserID)
 (struct leave-room (id) #:prefab)

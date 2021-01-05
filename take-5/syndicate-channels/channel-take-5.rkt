@@ -34,8 +34,8 @@
 ;; a UserLoggedIn is a (user-logged-in [Chan-of LobbyMsg])
 (struct user-logged-in (lobby-chan) #:transparent)
 
-;; a UserJoinRoom is a (user-join-room UserID RoomID [Chan-of RoomMsg])
-(struct user-join-room (user id chan) #:transparent)
+;; an ApproveJoin is an (approve-join UserID [Chan-of LobbyMsg])
+(struct approve-join (user chan) #:transparent)
 
 ;; a UserRoom is a (user-room RoomID [Chan-of RoomMsg]) ;; FIXME should there be a difference in the reply to Host vs. Guest?
 (struct user-room (id chan) #:transparent)
@@ -97,6 +97,16 @@
 ;; a UserRoom message, containing the RoomID of the Room and the channel on
 ;; which the User and Room can communicate.
 ;;
+;; There is a conversation about joining a room in the Lobby.
+;; To join a room, Users send a JoinRoom message to the Lobby, containing the
+;; UserID of the User and the RoomID of the room that they would like to join.
+;; If the room exists, then the Lobby sends the corresponding Room an ApproveJoin
+;; message, containing the UserID of the User and the Channel on which the User
+;; and Lobby communicate, and the Room sends back along the aforementioned channel
+;; a UserRoom message, containing the RoomID of the Room and the channel on which
+;; the User and Room can Communicate.
+;; If the room doesn't exist, the Lobby sends back a RoomNotFound message.
+;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Persistence Conversations
 ;; -------------------------
@@ -117,11 +127,6 @@
 
 
 
-;; 
-;; To join a room, Users send a Join Room message to the Lobby, containing the channel
-;; of the User. The Lobby forwards the message to the Room, and the Room replies to
-;; the User with a JoinedRoom message, containing the channel of the Room for communication.
-;; The User is designated as the Guest.
 ;; 
 ;; To Log Out, Users send a Log Out message to the Lobby. The Lobby stops all future
 ;; communication with the User until they have logged back in via the Authentication
@@ -382,7 +387,14 @@
       (channel-put temp-host-chan (user-room room-id host-chan))
 
       (let loop ([guests '()])
-        (loop guests)))))
+        (sync
+          (handle-evt
+            lobby-chan
+            (match-lambda
+              [(approve-join user-id user-chan)
+               (define guest-chan (make-channel))
+               (channel-put user-chan (user-room user-id guest-chan))
+               (loop (cons guest-chan guests))])))))))
 
         ;; (define guest-evts (apply choice-evt guests)) ;; FIXME no way this works, right?
         ;; (sync
@@ -430,7 +442,17 @@
              (define room-id (intern-symbol (gensym user-id)))
              (define room-chan (make-channel))
              (make-room room-id room-chan (hash-ref sessions user-id))
-             (loop sessions (hash-set room-lookup room-id room-chan) score-lookup)]))
+             (loop sessions (hash-set room-lookup room-id room-chan) score-lookup)]
+
+            [(join-room user-id room-id)
+             (cond
+               [(hash-has-key? room-lookup room-id)
+                (channel-put (hash-ref room-lookup room-id)
+                             (approve-join user-id (hash-ref sessions user-id)))]
+               [else
+                (channel-put (hash-ref sessions user-id)
+                             (room-not-found))])
+             (loop sessions room-lookup score-lookup)]))
 
         (define user-evts
           (apply choice-evt
@@ -449,10 +471,6 @@
                      room-lookup
                      score-lookup)]))))))
 
-      ;;     [(user-join-room user-id room-id resp-chan)
-      ;;      (define room-chan (hash-ref room-lookup room-id))
-      ;;      (channel-put room-chan msg)
-      ;;      (loop room-lookup score-lookup)]))))
   auth-comm-chan)
 
 
@@ -503,7 +521,7 @@
             (loop)])]
 
         [(create-room id)
-         (channel-put lobby-chan (create-room id))
+         (channel-put lobby-chan client-msg)
          (define server-msg (channel-get lobby-chan))
 
          (match server-msg
@@ -511,16 +529,16 @@
             (write (room room-id) output-port)
             (close-ports input-port output-port)])]
 
-        ;; [(join-room user-id room-id)
-        ;;  (define room-recv-chan (make-channel))
-        ;;  (channel-put lobby-chan (user-join-room user-id room-id room-recv-chan))
-        ;;  (define server-msg (channel-get room-recv-chan))
+        [(join-room id room-id)
+         (channel-put lobby-chan client-msg)
+         (define server-msg (channel-get lobby-chan))
 
-        ;;  (match server-msg
-        ;;    [(user-room room-id room-chan)
-        ;;     (write (room room-id) output-port)
-        ;;     (close-ports input-port output-port)])]
-        )))
+         (match server-msg
+           [(room-not-found)
+            (close-ports input-port output-port)]
+           [(user-room room-id chan)
+            (write (room room-id) output-port)
+            (close-ports input-port output-port)])])))
 
   ;; Register the client with a user account
   ;; UserID -> Void
