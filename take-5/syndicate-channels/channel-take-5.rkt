@@ -12,13 +12,27 @@
 ;; a Scores is a [Hash-of PlayerID Score]
 ;; Scores must contain an entry for each existing PlayerID
 
+;; a LobbyMsg is one of:
+;; - ListRooms
+;; - Rooms
+;; - GetResults
+;; - Results
+;; - CreateRoom
+;; - JoinRoom
+;; - UserRoom
+
+;; a RoomMsg is one of:
+;; - CancelGame
+;; - GameCancelled
+;; - LeaveGame
+
 ;; a Round is a (round Nat [List-of Card] [List-of Row] [Chan-of Move])
 (struct round (number hand rows move-chan) #:transparent)
 
 ;; a PlayerStruct is a (player PlayerID [Chan-of Round])
 (struct player (id chan) #:transparent)
 
-;; a UserRegister is a (user-register PlayerID [Chan-of FirstMsg]) ;; FIXME what is a FirstMsg?
+;; a UserRegister is a (user-register PlayerID [Chan-of UserRegistered])
 (struct user-register (id chan) #:transparent)
 
 ;; a UserRegistered is a (user-registered Token [Chan-of Login])
@@ -30,14 +44,13 @@
 ;; a SessionCreated is a (session-created [Chan-of LobbyMsg])
 (struct session-created (chan) #:transparent)
 
-;; FIXME need to define LobbyMsg
 ;; a UserLoggedIn is a (user-logged-in [Chan-of LobbyMsg])
 (struct user-logged-in (lobby-chan) #:transparent)
 
 ;; an ApproveJoin is an (approve-join UserID [Chan-of LobbyMsg])
 (struct approve-join (user chan) #:transparent)
 
-;; a UserRoom is a (user-room RoomID [Chan-of RoomMsg]) ;; FIXME should there be a difference in the reply to Host vs. Guest?
+;; a UserRoom is a (user-room RoomID [Chan-of RoomMsg])
 (struct user-room (id chan) #:transparent)
 
 ;; a RoomTerminated is a (room-terminated RoomID)
@@ -58,6 +71,7 @@
 (define LOGIN-INFO 'login-info)
 (define RESULTS-INFO 'results-info)
 
+;; Port -> Synchronizable Event 
 (define (read-datum-evt in)
   (define chan (make-channel))
 
@@ -93,7 +107,7 @@
 ;; -------------------
 ;; There is a conversation about the open Rooms in the Lobby.
 ;; To view the rooms that are available to join in the Lobby, a User sends a
-;; UserListRooms message to the Lobby, containing the UserID of the User. The
+;; ListRooms message to the Lobby, containing the UserID of the User. The
 ;; Lobby responds with a Rooms message, containing a List of RoomIDs.
 ;;
 ;; There is a conversation about the Results of games played by a User.
@@ -579,6 +593,7 @@
             (write (room room-id) output-port)
             (handle-guest-comm room-chan)])])))
 
+  ;; [Chan-of RoomMsg] -> Void
   (define (handle-host-comm room-chan)
     (let loop ()
       (define client-msg (read input-port))
@@ -592,6 +607,7 @@
             (write server-msg output-port)
             (close-ports input-port output-port)])])))
 
+  ;; [Chan-of RoomMsg] -> Void
   (define (handle-guest-comm room-chan)
     (let loop ()
       (define read-evt (read-datum-evt input-port))
