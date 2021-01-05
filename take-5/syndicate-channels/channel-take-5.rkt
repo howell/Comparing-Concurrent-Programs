@@ -124,18 +124,24 @@
 ;; data to associate with that symbol, and a channel on which to send replies. The
 ;; Database replies with an Acknowledgement message.
 ;; 
-
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Room Conversations
+;; ------------------
+;; There are three participants in Room-related conversations. There is one Room,
+;; which holds the players currently staged to play a game. There is one Host, who
+;; created the game. And there are multiple Guests, who would also like to play the
+;; game with the Host.
+;;
+;; There is a conversation about cancelling a game.
+;; To cancel a game, the Host sends a CancelGame message to the Room. The Room sends
+;; a CancelledGame message to the Host and Guests, and the Room can no longer be
+;; communicated with from that point onward.
 
 
 ;; 
 ;; To Log Out, Users send a Log Out message to the Lobby. The Lobby stops all future
 ;; communication with the User until they have logged back in via the Authentication
 ;; Manager.
-;;
-;; There are multiple conversations between the Room and its Host and Guests.
-;; To cancel a game, the Host sends a Cancel Game message to the Room. The Room
-;; sends a Cancelled Game message to the Host and Guests, and can no longer be
-;; communicated with.
 ;;
 ;; To start a game, the Host sends a Start Game message to the Room. The Room
 ;; spawns a Dealer which sends a Started Game message to the Host and Guests.
@@ -394,7 +400,15 @@
               [(approve-join user-id user-chan)
                (define guest-chan (make-channel))
                (channel-put user-chan (user-room user-id guest-chan))
-               (loop (cons guest-chan guests))])))))))
+               (loop (cons guest-chan guests))]))
+
+          (handle-evt
+            host-chan
+            (match-lambda
+              [(cancel-game)
+               (channel-put host-chan (game-cancelled room-id))
+               (for ([guest-chan guests])
+                 (channel-put guest-chan (game-cancelled room-id)))])))))))
 
         ;; (define guest-evts (apply choice-evt guests)) ;; FIXME no way this works, right?
         ;; (sync
@@ -403,13 +417,6 @@
         ;;     (match-lambda
         ;;       [(leave-room user-id)
         ;;        (loop (hash-remove guests user-id))]))
-        ;;   (handle-evt
-        ;;     host-chan
-        ;;     (match-lambda
-        ;;       [(cancel-game)
-        ;;        (for ([(user-id chan) guests])
-        ;;          (channel-put chan (game-cancelled room-id)))
-        ;;        (channel-put lobby-chan (game-cancelled room-id))]))))))
 
 (define (make-lobby)
   (define auth-comm-chan (make-channel))
@@ -527,7 +534,7 @@
          (match server-msg
            [(user-room room-id room-chan)
             (write (room room-id) output-port)
-            (close-ports input-port output-port)])]
+            (handle-host-comm room-chan)])]
 
         [(join-room id room-id)
          (channel-put lobby-chan client-msg)
@@ -536,9 +543,35 @@
          (match server-msg
            [(room-not-found)
             (close-ports input-port output-port)]
-           [(user-room room-id chan)
+           [(user-room room-id room-chan)
             (write (room room-id) output-port)
+            (handle-guest-comm room-chan)])])))
+
+  (define (handle-host-comm room-chan)
+    (let loop ()
+      (define client-msg (read input-port))
+      (match client-msg
+        [(cancel-game)
+         (channel-put room-chan client-msg)
+
+         (define server-msg (channel-get room-chan))
+         (match server-msg
+           [(game-cancelled room-id)
+            (write server-msg output-port)
             (close-ports input-port output-port)])])))
+
+  (define (handle-guest-comm room-chan)
+    (let loop ()
+      (define port-evt (read-line-evt input-port))
+
+      (sync
+        (handle-evt
+          room-chan
+          (match-lambda
+            [(game-cancelled room-id)
+             (write (game-cancelled room-id) output-port)
+             (close-ports input-port output-port)])))))
+
 
   ;; Register the client with a user account
   ;; UserID -> Void
