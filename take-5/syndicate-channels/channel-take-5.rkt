@@ -632,6 +632,32 @@
              (write (game-cancelled room-id) output-port)
              (close-ports input-port output-port)])))))
 
+  ;; a MessageProcessor is a (msg-processor (Struct -> Struct) Chan (Struct -> Struct))
+  (struct msg-processor (pre chan post) #:transparent)
+
+  ;; Chan [Hash Symbol MessageProcessor] -> Chan
+  ;; Requirements:
+  ;; 1. all messages received on the channel must be prefab structs
+  ;; 2. the keys of the hash must correspond to prefab struct keys
+  (define (process-msg-evt-loop chan h)
+    (define processed-msg-chan (make-channel))
+
+    (thread
+      (thunk
+        (let loop ()
+          (define msg (channel-get chan))
+          (match-define (msg-processor pre-process comm-chan post-process)
+                        (hash-ref h (prefab-struct-key msg)))
+
+          (define new-msg (pre-process msg))
+          (channel-put comm-chan new-msg)
+          (define received-msg (channel-get comm-chan))
+
+          (channel-put processed-msg-chan (post-process received-msg)))))
+
+    processed-msg-chan)
+
+
   ;; Register the client with a user account
   ;; UserID -> Void
   (define (register-user id)
