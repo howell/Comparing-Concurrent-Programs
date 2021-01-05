@@ -25,6 +25,7 @@
   (struct-out leave-room)
   (struct-out cancel-game)
   (struct-out game-cancelled)
+  (struct-out ack)
 
   ;; Constants
   CONNECT-PORT
@@ -100,6 +101,9 @@
 
 ;; a GameCancelled is a (game-cancelled RoomID)
 (struct game-cancelled (id) #:prefab)
+
+;; an Acknowledgement is an (ack)
+(struct ack () #:prefab)
 
 
 

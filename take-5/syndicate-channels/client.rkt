@@ -39,12 +39,7 @@
   (define room-msg (read i))
   (printf "Room with id ~a created!\n" (room-id room-msg))
 
-  (sleep 20)
-  (write (cancel-game) o)
-  (define another-room-msg (read i))
-  (match another-room-msg
-    [(game-cancelled room-id)
-     (printf "We're free! ~a\n" room-id)])
+  (sleep 200)
 
   (close-ports i o))
 
@@ -64,10 +59,12 @@
 
   (printf "Room ~a has been successfully joined!\n" (room-id confirmation-msg))
 
-  (define cancellation (read i))
-  (match cancellation
-    [(game-cancelled room-id)
-     (printf "We're done! ~a\n" room-id)])
+  (write (leave-room user-id) o)
+
+  (printf "trying to leave room\n")
+  (define ack-msg (read i))
+  (match ack-msg
+    [(ack) (printf "You have left!\n")])
 
   (close-ports i o))
 

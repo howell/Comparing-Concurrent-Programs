@@ -55,11 +55,18 @@
 ;; an Insert is an (insert Symbol Any Chan)
 (struct insert (key val reply-chan) #:transparent)
 
-;; an Acknowledgement is an (ack)
-(struct ack () #:transparent)
-
 (define LOGIN-INFO 'login-info)
 (define RESULTS-INFO 'results-info)
+
+(define (read-datum-evt in)
+  (define chan (make-channel))
+
+  (thread
+    (thunk
+      (define msg (read in))
+      (channel-put chan msg)))
+
+  chan)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;; Protocol ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -142,7 +149,9 @@
 ;; with from that point onward.
 ;;
 ;; There is a conversation about leaving a game.
-;; To leave a game, a Guest sends a LeaveGame message to the room.
+;; To leave a game, a Guest sends a LeaveGame message to the room. The Room replies
+;; with an Acknowledgement message to the Guest. That Guest can no longer communicate
+;; with that Room unless the Guest requests to re-join from the Lobby.
 
 
 ;; 
@@ -399,15 +408,27 @@
       (define host-chan (make-channel))
       (channel-put temp-host-chan (user-room room-id host-chan))
 
-      (let loop ([guests '()])
+      (let loop ([guests (hash)]) ;; [Hash-of UserID Chan]
+        (define (handle-guest-evt msg)
+          (match msg
+            [(leave-room user)
+             (channel-put (hash-ref guests user) (ack))
+             (loop (hash-remove guests user))]))
+
+        (define guest-evts
+          (apply choice-evt
+                 (map (λ (chan) (handle-evt chan handle-guest-evt))
+                      (hash-values guests))))
+
         (sync
+          guest-evts
           (handle-evt
             lobby-chan
             (match-lambda
               [(approve-join user-id user-chan)
                (define guest-chan (make-channel))
                (channel-put user-chan (user-room user-id guest-chan))
-               (loop (cons guest-chan guests))]))
+               (loop (hash-set guests user-id guest-chan))]))
 
           (handle-evt
             host-chan
@@ -415,16 +436,8 @@
               [(cancel-game)
                (channel-put lobby-chan (room-terminated room-id))
                (channel-put host-chan (game-cancelled room-id))
-               (for ([guest-chan guests])
+               (for ([guest-chan (hash-values guests)])
                  (channel-put guest-chan (game-cancelled room-id)))])))))))
-
-        ;; (define guest-evts (apply choice-evt guests)) ;; FIXME no way this works, right?
-        ;; (sync
-        ;;   (handle-evt
-        ;;     guest-evts
-        ;;     (match-lambda
-        ;;       [(leave-room user-id)
-        ;;        (loop (hash-remove guests user-id))]))
 
 (define (make-lobby)
   (define auth-comm-chan (make-channel))
@@ -472,7 +485,6 @@
         (define (handle-room-evt msg)
           (match msg
             [(room-terminated room-id)
-             (printf "removing room!\n")
              (loop sessions (hash-remove room-lookup room-id) score-lookup)]))
 
         (define user-evts
@@ -582,16 +594,27 @@
 
   (define (handle-guest-comm room-chan)
     (let loop ()
-      (define port-evt (read-line-evt input-port))
+      (define read-evt (read-datum-evt input-port))
 
       (sync
+        (handle-evt
+          read-evt
+          (match-lambda
+            [(leave-room user-id)
+             (channel-put room-chan (leave-room user-id))
+
+             (define server-msg (channel-get room-chan))
+             (match server-msg
+               [(ack)
+                (write (ack) output-port)
+                (close-ports input-port output-port)])]))
+
         (handle-evt
           room-chan
           (match-lambda
             [(game-cancelled room-id)
              (write (game-cancelled room-id) output-port)
              (close-ports input-port output-port)])))))
-
 
   ;; Register the client with a user account
   ;; UserID -> Void
