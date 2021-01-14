@@ -77,8 +77,11 @@
 
   (thread
     (thunk
-      (define msg (read in))
-      (channel-put chan msg)))
+      (let loop ()
+        (when (not (port-closed? in))
+          (define msg (read in))
+          (channel-put chan msg)
+          (loop)))))
 
   chan)
 
@@ -533,17 +536,19 @@
 (define (make-user input-port output-port register-chan)
   (define recv-chan (make-channel))
 
+  (define input-evt (read-datum-evt input-port))
+
   ;; Handle communication while client authenticating 
   ;; -> Void
   (define (handle-auth-comm)
-    (define client-msg (read input-port))
+    (define client-msg (channel-get input-evt))
     (match client-msg
       [(register user-id)
        (define auth-chan (register-user user-id))
        (handle-login auth-chan)]))
 
   (define (handle-login auth-chan)
-    (define client-msg (read input-port))
+    (define client-msg (channel-get input-evt))
     (match client-msg
       [(login user-id token)
        (define lobby-chan (log-in-user user-id token auth-chan))
@@ -553,7 +558,7 @@
   ;; Chan -> Void
   (define (handle-lobby-comm lobby-chan)
     (let loop ()
-      (define client-msg (read input-port))
+      (define client-msg (channel-get input-evt))
       (match client-msg
         [(list-rooms id)
          (channel-put lobby-chan client-msg)
@@ -596,7 +601,7 @@
   ;; [Chan-of RoomMsg] -> Void
   (define (handle-host-comm room-chan)
     (let loop ()
-      (define client-msg (read input-port))
+      (define client-msg (channel-get input-evt))
       (match client-msg
         [(cancel-game)
          (channel-put room-chan client-msg)
@@ -610,11 +615,9 @@
   ;; [Chan-of RoomMsg] -> Void
   (define (handle-guest-comm room-chan)
     (let loop ()
-      (define read-evt (read-datum-evt input-port))
-
       (sync
         (handle-evt
-          read-evt
+          input-evt
           (match-lambda
             [(leave-room user-id)
              (channel-put room-chan (leave-room user-id))
@@ -632,30 +635,30 @@
              (write (game-cancelled room-id) output-port)
              (close-ports input-port output-port)])))))
 
-  ;; a MessageProcessor is a (msg-processor (Struct -> Struct) Chan (Struct -> Struct))
-  (struct msg-processor (pre chan post) #:transparent)
+  ;; ;; a MessageProcessor is a (msg-processor (Struct -> Struct) Chan (Struct -> Struct))
+  ;; (struct msg-processor (pre chan post) #:transparent)
 
-  ;; Chan [Hash Symbol MessageProcessor] -> Chan
-  ;; Requirements:
-  ;; 1. all messages received on the channel must be prefab structs
-  ;; 2. the keys of the hash must correspond to prefab struct keys
-  (define (process-msg-evt-loop chan h)
-    (define processed-msg-chan (make-channel))
+  ;; ;; Chan [Hash Symbol MessageProcessor] -> Chan
+  ;; ;; Requirements:
+  ;; ;; 1. all messages received on the channel must be prefab structs
+  ;; ;; 2. the keys of the hash must correspond to prefab struct keys
+  ;; (define (process-msg-evt-loop chan h)
+  ;;   (define processed-msg-chan (make-channel))
 
-    (thread
-      (thunk
-        (let loop ()
-          (define msg (channel-get chan))
-          (match-define (msg-processor pre-process comm-chan post-process)
-                        (hash-ref h (prefab-struct-key msg)))
+  ;;   (thread
+  ;;     (thunk
+  ;;       (let loop ()
+  ;;         (define msg (channel-get chan))
+  ;;         (match-define (msg-processor pre-process comm-chan post-process)
+  ;;                       (hash-ref h (prefab-struct-key msg)))
 
-          (define new-msg (pre-process msg))
-          (channel-put comm-chan new-msg)
-          (define received-msg (channel-get comm-chan))
+  ;;         (define new-msg (pre-process msg))
+  ;;         (channel-put comm-chan new-msg)
+  ;;         (define received-msg (channel-get comm-chan))
 
-          (channel-put processed-msg-chan (post-process received-msg)))))
+  ;;         (channel-put processed-msg-chan (post-process received-msg)))))
 
-    processed-msg-chan)
+  ;;   processed-msg-chan)
 
 
   ;; Register the client with a user account
