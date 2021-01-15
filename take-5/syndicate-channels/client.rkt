@@ -1,22 +1,5 @@
 #lang racket
 
-;; Client Protocol (NEW)
-;; There are multiple clients communicating with one server.
-;; Clients register by sending a Register message, containing their name.
-;; The Server responds with a Registered message, containing a PlayerToken.
-
-;; Client Protocol (OLD)
-;; There are multiple clients communicating with one server.
-;;
-;; Clients register to play the game with the server by connecting to the server and sending a
-;; DeclarePlayer message over the output port, containing the player's ID.
-;;
-;; To play the game, the client waits for a MoveRequest message to be received from the input port,
-;; containing the round number, the player's current hand, and the current state of the rows in 
-;; the game. Clients respond with a Move message, containing the player's ID, the number of the round
-;; this move is being made in, and the card they wish to play.
-;; Invariant: the card selected by the client must be present in the hand the client the received. 
-
 (require [only-in racket/random random-ref])
 (require [only-in racket/trace trace-define])
 (require "struct.rkt")
@@ -35,9 +18,16 @@
   (define token (authenticate user-id i o))
   (printf "login token is: ~a\n" token)
 
-  (write (logout user-id) o)
+  (write (create-room user-id) o)
   (define resp (read i))
-  (printf "received this response: ~a\n" resp)
+
+  (printf "created room!\n")
+
+  (sleep 200)
+
+  ;; (write (logout user-id) o)
+  ;; (define resp (read i))
+  ;; (printf "received this response: ~a\n" resp)
 
   (close-ports i o))
 

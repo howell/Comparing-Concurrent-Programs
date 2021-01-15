@@ -27,11 +27,19 @@
 ;; - JoinRoom
 ;; - UserRoom
 ;; - Logout
+;; - Ack
 
 ;; a RoomMsg is one of:
 ;; - CancelGame
 ;; - GameCancelled
 ;; - LeaveGame
+;; - Ack
+
+;; a DBMsg is one of:
+;; - Ack
+;; - Select
+;; - Data
+;; - Insert
 
 ;; a Round is a (round Nat [List-of Card] [List-of Row] [Chan-of Move])
 (struct round (number hand rows move-chan) #:transparent)
@@ -60,6 +68,9 @@
 ;; a UserRoom is a (user-room RoomID [Chan-of RoomMsg])
 (struct user-room (id chan) #:transparent)
 
+;; a GuestRoom is a (guest-room RoomID [Chan-of RoomMsg] [Chan-of RoomMsg]) ;; FIXME two different types of channels
+(struct guest-room (id chan broadcast) #:transparent)
+
 ;; a RoomTerminated is a (room-terminated RoomID)
 (struct room-terminated (id) #:transparent)
 
@@ -78,6 +89,7 @@
 (define LOGIN-INFO 'login-info)
 (define RESULTS-INFO 'results-info)
 
+;; Create a repeatedly-synchronizable event that provides datums from an Input Port
 ;; Port -> Synchronizable Event 
 (define (read-datum-evt in)
   (define chan (make-channel))
@@ -418,6 +430,7 @@
 
 ;;;;;;;;;;;;;;;;; EXTENDED VERSION ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;; Listener [Chan-of UserRegister] -> Void
 (define (create-clients listener auth-chan)
   (let loop ()
     (define accept-evt (tcp-accept-evt listener))
@@ -431,22 +444,26 @@
            (make-user input output auth-chan)
            (loop)])))))
 
+;; RoomID [Chan-of LobbyMsg] [Chan-of Room] -> Void
 (define (make-room room-id lobby-chan temp-host-chan)
   (thread
     (thunk
       (define host-chan (make-channel))
       (channel-put temp-host-chan (user-room room-id host-chan))
 
-      (let loop ([guests (hash)]) ;; [Hash-of UserID Chan]
+      (let loop ([guests (hash)]) ;; [Hash-of UserID GuestRoom]
         (define (handle-guest-evt msg)
           (match msg
             [(leave-room user)
-             (channel-put (hash-ref guests user) (ack))
+             (match-define (guest-room _ guest-chan _) (hash-ref guests user))
+             (channel-put guest-chan (ack))
              (loop (hash-remove guests user))]))
 
         (define guest-evts
           (apply choice-evt
-                 (map (λ (chan) (handle-evt chan handle-guest-evt))
+                 (map (λ (guest) 
+                         (match-define (guest-room _ guest-chan _) guest)
+                         (handle-evt guest-chan handle-guest-evt))
                       (hash-values guests))))
 
         (sync
@@ -456,8 +473,10 @@
             (match-lambda
               [(approve-join user-id user-chan)
                (define guest-chan (make-channel))
-               (channel-put user-chan (user-room user-id guest-chan))
-               (loop (hash-set guests user-id guest-chan))]))
+               (define broadcast-guest-chan (make-channel))
+               (define guest-room-msg (guest-room user-id guest-chan broadcast-guest-chan))
+               (channel-put user-chan guest-room-msg)
+               (loop (hash-set guests user-id guest-room-msg))]))
 
           (handle-evt
             host-chan
@@ -465,9 +484,11 @@
               [(cancel-game)
                (channel-put lobby-chan (room-terminated room-id))
                (channel-put host-chan (game-cancelled room-id))
-               (for ([guest-chan (hash-values guests)])
-                 (channel-put guest-chan (game-cancelled room-id)))])))))))
+               (for ([guest-room-struct (hash-values guests)])
+                 (match-define (guest-room _user-id _guest-chan broadcast-chan) guest-room-struct)
+                 (channel-put broadcast-chan (game-cancelled room-id)))])))))))
 
+;; -> Void
 (define (make-lobby)
   (define auth-comm-chan (make-channel))
 
@@ -555,7 +576,10 @@
 
       (define input-evt (read-datum-evt input-port))
 
-      ;; ServerID is one of 'auth, 'lobby, 'room, 'dealer
+      ;; a ServerID is one of 'auth, 'lobby, 'room, 'room-broadcast, 'dealer
+
+      ;; [Hash-of ServerID Chan]
+      (define chan-hash (make-hash))
 
       ;; a MessageProcessor is a (msg-processor ServerID (Struct -> Struct))
       (struct msg-processor (target process) #:transparent)
@@ -584,8 +608,6 @@
 
         processed-msg-chan)
 
-      (define chan-hash (make-hash))
-
       (define/match (process-login-acceptance msg)
         [((user-logged-in lobby-chan))
          (hash-set! chan-hash 'lobby lobby-chan)
@@ -602,10 +624,14 @@
 
       (define/match (process-room-join msg)
         [((room-not-found)) msg]
-        [(_) (process-room-entry msg)])
+        [((guest-room id room-chan broadcast-chan)) 
+         (hash-set! chan-hash 'room room-chan)
+         (hash-set! chan-hash 'room-broadcast broadcast-chan)
+         (room id)])
 
       (define (process-room-exit msg)
         (hash-remove! chan-hash 'room) 
+        (when (hash-has-key? chan-hash 'room-broadcast) (hash-remove! chan-hash 'room-broadcast))
         msg)
     
       ;; registration and 'getting results' are the exceptions to the pattern
@@ -629,8 +655,8 @@
       (let loop ()
         ;; TODO does this fail b/c of the two-way comm when a guest?
         (define room-evt
-          (if (hash-has-key? chan-hash 'room)
-            (hash-ref chan-hash 'room)
+          (if (hash-has-key? chan-hash 'room-broadcast)
+            (hash-ref chan-hash 'room-broadcast)
             never-evt))
 
         (sync
@@ -662,6 +688,7 @@
 
   (thread
     (thunk
+      ;; -> [Hash-of UserID UserToken]
       (define (get-initial-tokens)
         (channel-put db-chan (select LOGIN-INFO db-recv-chan))
         (define db-resp (channel-get db-recv-chan))
@@ -673,6 +700,7 @@
       (let loop ([user-tokens initial-tokens] ;; [Hash-of UserID UserToken]
                  [user-comms (hash)]) ;; [Hash-of UserID [Chan-of AuthMsg]]
 
+        ;; Login -> Void
         (define (handle-login msg)
           (match msg
             [(login id token)
@@ -711,6 +739,7 @@
                         (hash-set user-comms id user-auth-chan))])]))))))
   register-chan)
 
+;; Path -> [Chan-of DBMsg]
 (define (make-database filename)
   (define starting-db
     (if (file-exists? filename)
