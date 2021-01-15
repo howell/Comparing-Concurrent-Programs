@@ -35,11 +35,9 @@
   (define token (authenticate user-id i o))
   (printf "login token is: ~a\n" token)
 
-  (write (create-room user-id) o)
-  (define room-msg (read i))
-  (printf "Room with id ~a created!\n" (room-id room-msg))
-
-  (sleep 200)
+  (write (logout user-id) o)
+  (define resp (read i))
+  (printf "received this response: ~a\n" resp)
 
   (close-ports i o))
 
@@ -85,28 +83,6 @@
   ;; Return the token for future use
   token)
 
-
-;; PlayerID GamePlayer -> void
-;; (define (create-client player-name make-decision)
-;;   (define-values (i o) (create-connection))
-;;   (remove-tcp-buffer i o)
-  
-;;   (sleep 1) ;; FIXME race due to spawning reader thread for syndicate driver
-
-;;   (write (declare-player player-name) o)
-
-;;   (let loop ()
-;;     (define contents (read i))
-;;     (match contents
-;;       [(move-request number hand rows)
-;;        (let ([c (make-decision hand rows)])
-;;          (write (played-in-round player-name number c) o)
-;;          (loop))]
-;;       [(game-over winners)
-;;        (if (member player-name winners)
-;;          (printf "We won!\n")
-;;          (printf "We lost :(\n"))
-;;        (close-ports i o)])))
 
 ;; GamePlayer
 (define (random-player hand rows)

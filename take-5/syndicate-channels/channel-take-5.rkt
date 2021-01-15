@@ -12,6 +12,12 @@
 ;; a Scores is a [Hash-of PlayerID Score]
 ;; Scores must contain an entry for each existing PlayerID
 
+;; an AuthMsg is one of:
+;; - UserRegister
+;; - Registered
+;; - Login
+;; - UserLoggedIn
+
 ;; a LobbyMsg is one of:
 ;; - ListRooms
 ;; - Rooms
@@ -20,6 +26,7 @@
 ;; - CreateRoom
 ;; - JoinRoom
 ;; - UserRoom
+;; - Logout
 
 ;; a RoomMsg is one of:
 ;; - CancelGame
@@ -133,6 +140,11 @@
 ;; a UserRoom message, containing the RoomID of the Room and the channel on which
 ;; the User and Room can Communicate.
 ;; If the room doesn't exist, the Lobby sends back a RoomNotFound message.
+;;
+;; There is a conversation about logging out from the Lobby.
+;; To Log out and exit the Lobby, a User sends the lobby a Logout message, containing
+;; the UserID of the User. The Lobby responds with an Ack message, and the User
+;; can no longer contact the Lobby until they have logged back in.
 ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Persistence Conversations
@@ -497,7 +509,11 @@
                [else
                 (channel-put (hash-ref sessions user-id)
                              (room-not-found))])
-             (loop sessions room-lookup score-lookup)]))
+             (loop sessions room-lookup score-lookup)]
+
+            [(logout user-id)
+             (channel-put (hash-ref sessions user-id) (ack))
+             (loop (hash-remove sessions user-id) room-lookup score-lookup)]))
 
         (define (handle-room-evt msg)
           (match msg
@@ -530,7 +546,6 @@
   auth-comm-chan)
 
 
-;; FIXME is this a good design?
 ;; Create a User component that communicates with the client over TCP
 ;; Port Port -> Void
 (define (make-user input-port output-port register-chan)
@@ -576,6 +591,10 @@
          (hash-set! chan-hash 'lobby lobby-chan)
          (logged-in)])
 
+      (define (process-logout msg)
+        (hash-remove! chan-hash 'lobby)
+        msg)
+
       (define/match (process-room-entry msg)
         [((user-room id room-chan))
          (hash-set! chan-hash 'room room-chan)
@@ -592,6 +611,7 @@
       ;; registration and 'getting results' are the exceptions to the pattern
       (define msg-processor-hash
         (hash 'login       (msg-processor 'auth process-login-acceptance)
+              'logout      (msg-processor 'lobby process-logout)
               'list-rooms  (msg-processor 'lobby identity)
               'get-results (msg-processor 'lobby identity)
               'create-room (msg-processor 'lobby process-room-entry)
@@ -651,7 +671,7 @@
       (define initial-tokens (get-initial-tokens))
 
       (let loop ([user-tokens initial-tokens] ;; [Hash-of UserID UserToken]
-                 [user-comms (hash)]) ;; [Hash-of UserID [Chan-of AuthMsg]] FIXME what is an AuthMsg?
+                 [user-comms (hash)]) ;; [Hash-of UserID [Chan-of AuthMsg]]
 
         (define (handle-login msg)
           (match msg
@@ -691,7 +711,6 @@
                         (hash-set user-comms id user-auth-chan))])]))))))
   register-chan)
 
-;; TODO reload the DB when this opens up
 (define (make-database filename)
   (define starting-db
     (if (file-exists? filename)

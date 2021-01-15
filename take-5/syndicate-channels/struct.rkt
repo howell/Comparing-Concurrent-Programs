@@ -12,6 +12,7 @@
   (struct-out register)
   (struct-out registered)
   (struct-out login)
+  (struct-out logout)
   (struct-out logged-in)
   (struct-out list-rooms)
   (struct-out rooms)
@@ -62,6 +63,9 @@
 
 ;; a Login is a (log-in UserID UserToken)
 (struct login (id token) #:prefab)
+
+;; a Logout is a (logged-out UserID)
+(struct logout (id) #:prefab)
 
 ;; a LoggedIn is a (logged-in)
 (struct logged-in () #:prefab)
