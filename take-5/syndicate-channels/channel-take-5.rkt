@@ -534,157 +534,106 @@
 ;; Create a User component that communicates with the client over TCP
 ;; Port Port -> Void
 (define (make-user input-port output-port register-chan)
-  (define recv-chan (make-channel))
-
-  (define input-evt (read-datum-evt input-port))
-
-  ;; Handle communication while client authenticating 
-  ;; -> Void
-  (define (handle-auth-comm)
-    (define client-msg (channel-get input-evt))
-    (match client-msg
-      [(register user-id)
-       (define auth-chan (register-user user-id))
-       (handle-login auth-chan)]))
-
-  (define (handle-login auth-chan)
-    (define client-msg (channel-get input-evt))
-    (match client-msg
-      [(login user-id token)
-       (define lobby-chan (log-in-user user-id token auth-chan))
-       (handle-lobby-comm lobby-chan)]))
-
-  ;; Handle communication between client and lobby
-  ;; Chan -> Void
-  (define (handle-lobby-comm lobby-chan)
-    (let loop ()
-      (define client-msg (channel-get input-evt))
-      (match client-msg
-        [(list-rooms id)
-         (channel-put lobby-chan client-msg)
-         (define server-msg (channel-get lobby-chan))
-
-         (match server-msg
-           [(rooms items)
-            (write server-msg output-port)
-            (loop)])]
-
-        [(get-results id)
-         (channel-put lobby-chan client-msg)
-         (define server-msg (channel-get lobby-chan))
-
-         (match server-msg
-           [(results items)
-            (write server-msg output-port)
-            (loop)])]
-
-        [(create-room id)
-         (channel-put lobby-chan client-msg)
-         (define server-msg (channel-get lobby-chan))
-
-         (match server-msg
-           [(user-room room-id room-chan)
-            (write (room room-id) output-port)
-            (handle-host-comm room-chan)])]
-
-        [(join-room id room-id)
-         (channel-put lobby-chan client-msg)
-         (define server-msg (channel-get lobby-chan))
-
-         (match server-msg
-           [(room-not-found)
-            (close-ports input-port output-port)]
-           [(user-room room-id room-chan)
-            (write (room room-id) output-port)
-            (handle-guest-comm room-chan)])])))
-
-  ;; [Chan-of RoomMsg] -> Void
-  (define (handle-host-comm room-chan)
-    (let loop ()
-      (define client-msg (channel-get input-evt))
-      (match client-msg
-        [(cancel-game)
-         (channel-put room-chan client-msg)
-
-         (define server-msg (channel-get room-chan))
-         (match server-msg
-           [(game-cancelled room-id)
-            (write server-msg output-port)
-            (close-ports input-port output-port)])])))
-
-  ;; [Chan-of RoomMsg] -> Void
-  (define (handle-guest-comm room-chan)
-    (let loop ()
-      (sync
-        (handle-evt
-          input-evt
-          (match-lambda
-            [(leave-room user-id)
-             (channel-put room-chan (leave-room user-id))
-
-             (define server-msg (channel-get room-chan))
-             (match server-msg
-               [(ack)
-                (write (ack) output-port)
-                (close-ports input-port output-port)])]))
-
-        (handle-evt
-          room-chan
-          (match-lambda
-            [(game-cancelled room-id)
-             (write (game-cancelled room-id) output-port)
-             (close-ports input-port output-port)])))))
-
-  ;; ;; a MessageProcessor is a (msg-processor (Struct -> Struct) Chan (Struct -> Struct))
-  ;; (struct msg-processor (pre chan post) #:transparent)
-
-  ;; ;; Chan [Hash Symbol MessageProcessor] -> Chan
-  ;; ;; Requirements:
-  ;; ;; 1. all messages received on the channel must be prefab structs
-  ;; ;; 2. the keys of the hash must correspond to prefab struct keys
-  ;; (define (process-msg-evt-loop chan h)
-  ;;   (define processed-msg-chan (make-channel))
-
-  ;;   (thread
-  ;;     (thunk
-  ;;       (let loop ()
-  ;;         (define msg (channel-get chan))
-  ;;         (match-define (msg-processor pre-process comm-chan post-process)
-  ;;                       (hash-ref h (prefab-struct-key msg)))
-
-  ;;         (define new-msg (pre-process msg))
-  ;;         (channel-put comm-chan new-msg)
-  ;;         (define received-msg (channel-get comm-chan))
-
-  ;;         (channel-put processed-msg-chan (post-process received-msg)))))
-
-  ;;   processed-msg-chan)
-
-
-  ;; Register the client with a user account
-  ;; UserID -> Void
-  (define (register-user id)
-    (channel-put register-chan (user-register id recv-chan))
-    (define server-msg (channel-get recv-chan))
-
-    (match server-msg
-      [(user-registered token user-auth-chan)
-       (write (registered token) output-port)
-       user-auth-chan]))
-
-  ;; UserID UserToken [Chan-of Login] -> Void
-  (define (log-in-user id token auth-chan)
-    (channel-put auth-chan (login id token))
-    (define server-msg (channel-get auth-chan))
-
-    (match server-msg
-      [(user-logged-in lobby-chan)
-       (write (logged-in) output-port)
-       lobby-chan]))
-
   (thread
     (thunk
-      (handle-auth-comm))))
+      (define recv-chan (make-channel))
+
+      (define input-evt (read-datum-evt input-port))
+
+      ;; ServerID is one of 'auth, 'lobby, 'room, 'dealer
+
+      ;; a MessageProcessor is a (msg-processor ServerID (Struct -> Struct))
+      (struct msg-processor (target process) #:transparent)
+
+      ;; Chan [Hash Symbol MessageProcessor] -> Chan
+      ;; Requirements:
+      ;; 1. all messages received on the channel must be prefab structs
+      ;; 2. the keys of the hash must correspond to prefab struct keys
+      (define (process-msg-evt-loop chan h)
+        (define processed-msg-chan (make-channel))
+
+        (thread
+          (thunk
+            (let loop ()
+              (define msg (channel-get chan))
+              (match-define (msg-processor target process)
+                            (hash-ref h (prefab-struct-key msg)))
+
+              (define comm-chan (hash-ref chan-hash target))
+
+              (channel-put comm-chan msg)
+              (define received-msg (channel-get comm-chan))
+
+              (channel-put processed-msg-chan (process received-msg))
+              (loop))))
+
+        processed-msg-chan)
+
+      (define chan-hash (make-hash))
+
+      (define/match (process-login-acceptance msg)
+        [((user-logged-in lobby-chan))
+         (hash-set! chan-hash 'lobby lobby-chan)
+         (logged-in)])
+
+      (define/match (process-room-entry msg)
+        [((user-room id room-chan))
+         (hash-set! chan-hash 'room room-chan)
+         (room id)])
+
+      (define/match (process-room-join msg)
+        [((room-not-found)) msg]
+        [(_) (process-room-entry msg)])
+
+      (define (process-room-exit msg)
+        (hash-remove! chan-hash 'room) 
+        msg)
+    
+      ;; registration and 'getting results' are the exceptions to the pattern
+      (define msg-processor-hash
+        (hash 'login       (msg-processor 'auth process-login-acceptance)
+              'list-rooms  (msg-processor 'lobby identity)
+              'get-results (msg-processor 'lobby identity)
+              'create-room (msg-processor 'lobby process-room-entry)
+              'join-room   (msg-processor 'lobby process-room-join)
+              'cancel-game (msg-processor 'room process-room-exit)
+              'leave-room  (msg-processor 'room process-room-exit)))
+
+      (define msg-loop-evt (process-msg-evt-loop input-evt msg-processor-hash))
+
+      (define client-msg (channel-get input-evt))
+      (match client-msg
+        [(register user-id)
+         (channel-put register-chan (user-register user-id recv-chan))])
+
+      (let loop ()
+        ;; TODO does this fail b/c of the two-way comm when a guest?
+        (define room-evt
+          (if (hash-has-key? chan-hash 'room)
+            (hash-ref chan-hash 'room)
+            never-evt))
+
+        (sync
+          (handle-evt
+            msg-loop-evt
+            (λ (msg)
+              (write msg output-port)
+              (loop)))
+
+          (handle-evt
+            room-evt
+            (match-lambda
+              [(game-cancelled room-id)
+               (write (game-cancelled room-id) output-port)
+               (loop)]))
+
+          (handle-evt
+            recv-chan
+            (match-lambda
+              [(user-registered token user-auth-chan)
+               (write (registered token) output-port)
+               (hash-set! chan-hash 'auth user-auth-chan)
+               (loop)])))))))
 
 ;; Chan -> Chan
 (define (make-authentication-manager lobby-chan db-chan)
