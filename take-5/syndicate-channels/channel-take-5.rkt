@@ -576,14 +576,6 @@
 
       (define input-evt (read-datum-evt input-port))
 
-      ;; a ServerID is one of 'auth, 'lobby, 'room, 'room-broadcast, 'dealer
-
-      ;; [Hash-of ServerID Chan]
-      (define chan-hash (make-hash))
-
-      ;; a MessageProcessor is a (msg-processor ServerID (Struct -> Struct))
-      (struct msg-processor (target process) #:transparent)
-
       ;; Chan [Hash Symbol MessageProcessor] -> Chan
       ;; Requirements:
       ;; 1. all messages received on the channel must be prefab structs
@@ -594,17 +586,16 @@
         (thread
           (thunk
             (let loop ()
-              (define msg (channel-get chan))
-              (match-define (msg-processor target process)
-                            (hash-ref h (prefab-struct-key msg)))
+              (sync
+                (handle-evt
+                  processed-msg-chan
+                  (λ (msg)
+                     (define post-process-msg (hash-ref- h (prefab-struct-key msg)))
 
-              (define comm-chan (hash-ref chan-hash target))
-
-              (channel-put comm-chan msg)
-              (define received-msg (channel-get comm-chan))
-
-              (channel-put processed-msg-chan (process received-msg))
-              (loop))))
+                     (channel-put comm-chan msg)
+                     (define received-msg (channel-get comm-chan))
+                     (channel-put processed-msg-chan (post-process-msg received-msg))
+                     (loop)))))))
 
         processed-msg-chan)
 
@@ -633,24 +624,75 @@
         (hash-remove! chan-hash 'room) 
         (when (hash-has-key? chan-hash 'room-broadcast) (hash-remove! chan-hash 'room-broadcast))
         msg)
+
+      ;; Game plan:
+      ;; go back to old version
+      ;; use aBsTrAcTiOn to write functions and hashes to simplify structure
+
+      (define auth-process-hash
+        (hash 'login process-login-acceptance))
+
+      (define lobby-process-hash
+        (hash 'logout      process-logout
+              'list-rooms  identity
+              'get-results identity
+              'create-room process-room-entry
+              'join-room   process-room-join))
+
+      (define room-process-hash
+        (hash 
     
       ;; registration and 'getting results' are the exceptions to the pattern
       (define msg-processor-hash
-        (hash 'login       (msg-processor 'auth process-login-acceptance)
+        (hash 'login       (msg-processor 'auth  process-login-acceptance)
               'logout      (msg-processor 'lobby process-logout)
               'list-rooms  (msg-processor 'lobby identity)
               'get-results (msg-processor 'lobby identity)
               'create-room (msg-processor 'lobby process-room-entry)
               'join-room   (msg-processor 'lobby process-room-join)
-              'cancel-game (msg-processor 'room process-room-exit)
-              'leave-room  (msg-processor 'room process-room-exit)))
+              'cancel-game (msg-processor 'room  process-room-exit)
+              'leave-room  (msg-processor 'room  process-room-exit)))
 
       (define msg-loop-evt (process-msg-evt-loop input-evt msg-processor-hash))
 
       (define client-msg (channel-get input-evt))
       (match client-msg
         [(register user-id)
-         (channel-put register-chan (user-register user-id recv-chan))])
+         (channel-put register-chan (user-register user-id recv-chan))
+         (define received-msg (channel-get recv-chan))
+         (match received-msg
+           [(user-registered token user-auth-chan)
+            (write (registered-token) output-port)
+            (handle-auth-comms user-id user-auth-chan)])])
+
+      (define (handle-auth-comms user-id auth-chan)
+        (define client-msg (channel-get input-evt))
+        (channel-put received-msg auth-chan)
+
+        (define server-msg (channel-get auth-chan))
+        (match server-msg
+          [(user-logged-in lobby-chan)
+           (write (logged-in) output-port)
+           (handle-lobby-comms user-id auth-chan lobby-chan)]))
+
+      ;; Ideally, we'd hide unrelated chans
+      (define (handle-lobby-comms user-id auth-chan lobby-chan)
+        (define client-msg (channel-get input-evt))
+        (match client-msg
+          [(list-rooms user-id)
+           (]
+          [(get-results user-id) ]
+          [(create-room user-id) ]
+          [(join-room user-id room-id) ]
+          [(logout user-id) ]))
+
+
+
+
+      (define/match (process-login-acceptance msg)
+        [((user-logged-in lobby-chan))
+         (hash-set! chan-hash 'lobby lobby-chan)
+         (logged-in)])
 
       (let loop ()
         ;; TODO does this fail b/c of the two-way comm when a guest?
