@@ -74,6 +74,9 @@
 ;; a RoomTerminated is a (room-terminated RoomID)
 (struct room-terminated (id) #:transparent)
 
+;; a UserGameStarted is a (user-game-started Chan)
+(struct user-game-started (chan) #:transparent)
+
 ;; a DeclaredWinners is a (declared-winner/s [List-of PlayerID])
 (struct declared-winner/s (player/s) #:transparent)
 
@@ -189,24 +192,20 @@
 ;; the Lobby, containing the Room's RoomID. The Room can no longer be communicated
 ;; with from that point onward.
 ;;
+;; There is a conversation about starting the game.
+;; To start a game, the Host sends a StartGame message to the room. The Room replies
+;; with a GameNotStarted message if there aren't sufficient players to start the game.
+;; Otherwise, the Room spawns a Dealer that broadcasts a GameStarted message to the
+;; Host and Guests, and the Room can no longer be communicated with.
+;;
 ;; There is a conversation about leaving a game.
 ;; To leave a game, a Guest sends a LeaveGame message to the room. The Room replies
 ;; with an Acknowledgement message to the Guest. That Guest can no longer communicate
 ;; with that Room unless the Guest requests to re-join from the Lobby.
 
 
-;; 
-;; To Log Out, Users send a Log Out message to the Lobby. The Lobby stops all future
-;; communication with the User until they have logged back in via the Authentication
-;; Manager.
-;;
-;; To start a game, the Host sends a Start Game message to the Room. The Room
-;; spawns a Dealer which sends a Started Game message to the Host and Guests.
-;; Host and Guests are then designated as Players.
-;;
-;; A Guest may leave the game by sending a Leave Game message to the room.
-;; They can no longer communicate with that Room unless they join it again.
-;;
+
+
 ;; There are two conversations regarding playing the game:
 ;; To play a round of the game, the Dealer sends each Player a Round message
 ;; containing the Player's hand, the current rows, and a channel for posting
@@ -625,10 +624,17 @@
           [(cancel-game)
            (channel-put room-chan client-msg)
            (write (channel-get room-chan) output-port)
-           (handle-lobby-comms user-id auth-chan lobby-chan)]))
+           (handle-lobby-comms user-id auth-chan lobby-chan)]
+          [(start-game)
+           (channel-put room-chan client-msg)
+           (define server-msg (channel-get room-chan))
+           (match server-msg
+             [(
+
+
+           ))
 
       (define (handle-guest-comms user-id auth-chan lobby-chan room-chan broadcast-chan)
-        (printf "guest comms time\n")
         (sync
           (handle-evt
             input-evt

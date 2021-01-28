@@ -26,6 +26,8 @@
   (struct-out leave-room)
   (struct-out cancel-game)
   (struct-out game-cancelled)
+  (struct-out game-started)
+  (struct-out game-not-started)
   (struct-out ack)
 
   ;; Constants
@@ -109,7 +111,11 @@
 ;; an Acknowledgement is an (ack)
 (struct ack () #:prefab)
 
+;; a GameStarted is a (game-started)
+(struct game-started () #:prefab)
 
+;; a GameNotStarted is a (game-not-started)
+(struct game-not-started () #:prefab)
 
 
 
