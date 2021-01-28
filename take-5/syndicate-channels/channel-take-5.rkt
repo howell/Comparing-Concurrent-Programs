@@ -196,7 +196,7 @@
 ;; To start a game, the Host sends a StartGame message to the room. The Room replies
 ;; with a GameNotStarted message if there aren't sufficient players to start the game.
 ;; Otherwise, the Room spawns a Dealer that broadcasts a GameStarted message to the
-;; Host and Guests, and the Room can no longer be communicated with.
+;; Host, Guests, and the Lobby, and the Room can no longer be communicated with.
 ;;
 ;; There is a conversation about leaving a game.
 ;; To leave a game, a Guest sends a LeaveGame message to the room. The Room replies
@@ -485,7 +485,31 @@
                (channel-put host-chan (game-cancelled room-id))
                (for ([guest-room-struct (hash-values guests)])
                  (match-define (guest-room _user-id _guest-chan broadcast-chan) guest-room-struct)
-                 (channel-put broadcast-chan (game-cancelled room-id)))])))))))
+                 (channel-put broadcast-chan (game-cancelled room-id)))]
+              [(start-game)
+               (channel-put lobby-chan (game-started))
+               (define guest-chan-lookup 
+                 (for/hash ([(name guest-room-msg) (in-hash guests)])
+                   (match-define (guest-room _ _ broadcast-guest-chan) guest-room-msg)
+                   (values name broadcast-guest-chan)))
+
+
+
+
+               (make-dealer lobby-chan 
+
+
+               (make-dealer lobby-chan (cons host-chan (hash-values guests))
+
+
+
+
+
+
+
+
+
+              )))))))
 
 ;; -> Void
 (define (make-lobby)
