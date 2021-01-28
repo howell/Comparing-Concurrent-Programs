@@ -572,102 +572,10 @@
 (define (make-user input-port output-port register-chan)
   (thread
     (thunk
-      (define recv-chan (make-channel))
-
-      (define input-evt (read-datum-evt input-port))
-
-      ;; Chan [Hash Symbol MessageProcessor] -> Chan
-      ;; Requirements:
-      ;; 1. all messages received on the channel must be prefab structs
-      ;; 2. the keys of the hash must correspond to prefab struct keys
-      (define (process-msg-evt-loop chan h)
-        (define processed-msg-chan (make-channel))
-
-        (thread
-          (thunk
-            (let loop ()
-              (sync
-                (handle-evt
-                  processed-msg-chan
-                  (λ (msg)
-                     (define post-process-msg (hash-ref- h (prefab-struct-key msg)))
-
-                     (channel-put comm-chan msg)
-                     (define received-msg (channel-get comm-chan))
-                     (channel-put processed-msg-chan (post-process-msg received-msg))
-                     (loop)))))))
-
-        processed-msg-chan)
-
-      (define/match (process-login-acceptance msg)
-        [((user-logged-in lobby-chan))
-         (hash-set! chan-hash 'lobby lobby-chan)
-         (logged-in)])
-
-      (define (process-logout msg)
-        (hash-remove! chan-hash 'lobby)
-        msg)
-
-      (define/match (process-room-entry msg)
-        [((user-room id room-chan))
-         (hash-set! chan-hash 'room room-chan)
-         (room id)])
-
-      (define/match (process-room-join msg)
-        [((room-not-found)) msg]
-        [((guest-room id room-chan broadcast-chan)) 
-         (hash-set! chan-hash 'room room-chan)
-         (hash-set! chan-hash 'room-broadcast broadcast-chan)
-         (room id)])
-
-      (define (process-room-exit msg)
-        (hash-remove! chan-hash 'room) 
-        (when (hash-has-key? chan-hash 'room-broadcast) (hash-remove! chan-hash 'room-broadcast))
-        msg)
-
-      ;; Game plan:
-      ;; go back to old version
-      ;; use aBsTrAcTiOn to write functions and hashes to simplify structure
-
-      (define auth-process-hash
-        (hash 'login process-login-acceptance))
-
-      (define lobby-process-hash
-        (hash 'logout      process-logout
-              'list-rooms  identity
-              'get-results identity
-              'create-room process-room-entry
-              'join-room   process-room-join))
-
-      (define room-process-hash
-        (hash 
-    
-      ;; registration and 'getting results' are the exceptions to the pattern
-      (define msg-processor-hash
-        (hash 'login       (msg-processor 'auth  process-login-acceptance)
-              'logout      (msg-processor 'lobby process-logout)
-              'list-rooms  (msg-processor 'lobby identity)
-              'get-results (msg-processor 'lobby identity)
-              'create-room (msg-processor 'lobby process-room-entry)
-              'join-room   (msg-processor 'lobby process-room-join)
-              'cancel-game (msg-processor 'room  process-room-exit)
-              'leave-room  (msg-processor 'room  process-room-exit)))
-
-      (define msg-loop-evt (process-msg-evt-loop input-evt msg-processor-hash))
-
-      (define client-msg (channel-get input-evt))
-      (match client-msg
-        [(register user-id)
-         (channel-put register-chan (user-register user-id recv-chan))
-         (define received-msg (channel-get recv-chan))
-         (match received-msg
-           [(user-registered token user-auth-chan)
-            (write (registered-token) output-port)
-            (handle-auth-comms user-id user-auth-chan)])])
 
       (define (handle-auth-comms user-id auth-chan)
         (define client-msg (channel-get input-evt))
-        (channel-put received-msg auth-chan)
+        (channel-put auth-chan client-msg)
 
         (define server-msg (channel-get auth-chan))
         (match server-msg
@@ -677,51 +585,77 @@
 
       ;; Ideally, we'd hide unrelated chans
       (define (handle-lobby-comms user-id auth-chan lobby-chan)
+        (let loop ()
+
+          (define client-msg (channel-get input-evt))
+          (match client-msg
+            [(list-rooms user-id)
+             (channel-put lobby-chan client-msg)
+             (write (channel-get lobby-chan) output-port)
+             (loop)]
+            [(get-results user-id)
+             (channel-put lobby-chan client-msg)
+             (write (channel-get lobby-chan) output-port)
+             (loop)]
+            [(create-room user-id)
+             (channel-put lobby-chan client-msg)
+             (define server-msg (channel-get lobby-chan))
+             (match server-msg
+               [(user-room id room-chan)
+                (write (room id) output-port)
+                (handle-room-comms user-id auth-chan lobby-chan room-chan)])]
+            [(join-room user-id room-id)
+             (channel-put lobby-chan client-msg)
+             (define server-msg (channel-get lobby-chan))
+             (match server-msg
+               [(room-not-found)
+                (write server-msg output-port)
+                (loop)]
+               [(guest-room id room-chan broadcast-chan)
+                (write (room id) output-port)
+                (handle-guest-comms user-id auth-chan lobby-chan room-chan broadcast-chan)])]
+            [(logout user-id)
+             (channel-put lobby-chan client-msg)
+             (write (channel-get lobby-chan) output-port)
+             (handle-auth-comms user-id auth-chan)])))
+
+      (define (handle-room-comms user-id auth-chan lobby-chan room-chan)
         (define client-msg (channel-get input-evt))
         (match client-msg
-          [(list-rooms user-id)
-           (]
-          [(get-results user-id) ]
-          [(create-room user-id) ]
-          [(join-room user-id room-id) ]
-          [(logout user-id) ]))
+          [(cancel-game)
+           (channel-put room-chan client-msg)
+           (write (channel-get room-chan) output-port)
+           (handle-lobby-comms user-id auth-chan lobby-chan)]))
 
-
-
-
-      (define/match (process-login-acceptance msg)
-        [((user-logged-in lobby-chan))
-         (hash-set! chan-hash 'lobby lobby-chan)
-         (logged-in)])
-
-      (let loop ()
-        ;; TODO does this fail b/c of the two-way comm when a guest?
-        (define room-evt
-          (if (hash-has-key? chan-hash 'room-broadcast)
-            (hash-ref chan-hash 'room-broadcast)
-            never-evt))
-
+      (define (handle-guest-comms user-id auth-chan lobby-chan room-chan broadcast-chan)
+        (printf "guest comms time\n")
         (sync
           (handle-evt
-            msg-loop-evt
-            (λ (msg)
-              (write msg output-port)
-              (loop)))
-
+            input-evt
+            (match-lambda
+              [(leave-room user-id)
+               (channel-put room-chan msg)
+               (write (channel-get room-chan) output-port)
+               (handle-lobby-comms user-id auth-chan lobby-chan)]))
           (handle-evt
-            room-evt
+            broadcast-chan
             (match-lambda
               [(game-cancelled room-id)
                (write (game-cancelled room-id) output-port)
-               (loop)]))
+               (handle-lobby-comms user-id auth-chan lobby-chan)]))))
 
-          (handle-evt
-            recv-chan
-            (match-lambda
-              [(user-registered token user-auth-chan)
-               (write (registered token) output-port)
-               (hash-set! chan-hash 'auth user-auth-chan)
-               (loop)])))))))
+      (define recv-chan (make-channel))
+      (define input-evt (read-datum-evt input-port))
+
+      (define client-msg (channel-get input-evt))
+      (match client-msg
+        [(register user-id)
+         (channel-put register-chan (user-register user-id recv-chan))
+         (define received-msg (channel-get recv-chan))
+         (match received-msg
+           [(user-registered token user-auth-chan)
+            (write (registered token) output-port)
+            (handle-auth-comms user-id user-auth-chan)])]))))
 
 ;; Chan -> Chan
 (define (make-authentication-manager lobby-chan db-chan)
