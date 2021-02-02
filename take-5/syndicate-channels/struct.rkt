@@ -25,8 +25,10 @@
   (struct-out room-not-found)
   (struct-out leave-room)
   (struct-out cancel-game)
+  (struct-out start-game)
   (struct-out game-cancelled)
   (struct-out game-started)
+  (struct-out game-has-begun)
   (struct-out game-not-started)
   (struct-out ack)
 
@@ -105,19 +107,23 @@
 ;; a CancelGame is a (cancel-game)
 (struct cancel-game () #:prefab)
 
+;; a StartGame is a (start-game)
+(struct start-game () #:prefab)
+
 ;; a GameCancelled is a (game-cancelled RoomID)
 (struct game-cancelled (id) #:prefab)
 
 ;; an Acknowledgement is an (ack)
 (struct ack () #:prefab)
 
-;; a GameStarted is a (game-started)
-(struct game-started () #:prefab)
+;; a GameStarted is a (game-started [Chan])
+(struct game-started (chan) #:prefab)
 
 ;; a GameNotStarted is a (game-not-started)
 (struct game-not-started () #:prefab)
 
-
+;; a GameHasBegun is a (game-has-begun)
+(struct game-has-begun () #:prefab)
 
 ;; a DeclarePlayer is a (declare-player PlayerID)
 (struct declare-player (id) #:prefab)

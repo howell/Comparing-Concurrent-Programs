@@ -196,7 +196,9 @@
 ;; To start a game, the Host sends a StartGame message to the room. The Room replies
 ;; with a GameNotStarted message if there aren't sufficient players to start the game.
 ;; Otherwise, the Room spawns a Dealer that broadcasts a GameStarted message to the
-;; Host, Guests, and the Lobby, and the Room can no longer be communicated with.
+;; Host and Guests containing the new channel by which they will communicate with
+;; the Dealer, and a GameHasBegun message to the Lobby. At that point, the Room
+;; can no longer be communicated with.
 ;;
 ;; There is a conversation about leaving a game.
 ;; To leave a game, a Guest sends a LeaveGame message to the room. The Room replies
@@ -444,7 +446,7 @@
            (loop)])))))
 
 ;; RoomID [Chan-of LobbyMsg] [Chan-of Room] -> Void
-(define (make-room room-id lobby-chan temp-host-chan)
+(define (make-room room-id lobby-chan host-name temp-host-chan)
   (thread
     (thunk
       (define host-chan (make-channel))
@@ -487,29 +489,17 @@
                  (match-define (guest-room _user-id _guest-chan broadcast-chan) guest-room-struct)
                  (channel-put broadcast-chan (game-cancelled room-id)))]
               [(start-game)
-               (channel-put lobby-chan (game-started))
-               (define guest-chan-lookup 
-                 (for/hash ([(name guest-room-msg) (in-hash guests)])
-                   (match-define (guest-room _ _ broadcast-guest-chan) guest-room-msg)
-                   (values name broadcast-guest-chan)))
-
-
-
-
-               (make-dealer lobby-chan 
-
-
-               (make-dealer lobby-chan (cons host-chan (hash-values guests))
-
-
-
-
-
-
-
-
-
-              )))))))
+               (cond
+                 [(= (hash-count guests) 0)
+                  (channel-put host-chan (game-not-started))
+                  (loop guests)]
+                 [else
+                  (define guest-chan-lookup 
+                    (for/hash ([(name guest-room-msg) (in-hash guests)])
+                      (match-define (guest-room _ _ broadcast-guest-chan) guest-room-msg)
+                      (values name broadcast-guest-chan)))
+                  (define player-chan-lookup (hash-set guest-chan-lookup host-name host-chan))
+                  (make-dealer player-chan-lookup lobby-chan)])])))))))
 
 ;; -> Void
 (define (make-lobby)
@@ -542,7 +532,7 @@
             [(create-room user-id)
              (define room-id (intern-symbol (gensym user-id)))
              (define room-chan (make-channel))
-             (make-room room-id room-chan (hash-ref sessions user-id))
+             (make-room room-id room-chan user-id (hash-ref sessions user-id))
              (loop sessions (hash-set room-lookup room-id room-chan) score-lookup)]
 
             [(join-room user-id room-id)
@@ -653,10 +643,14 @@
            (channel-put room-chan client-msg)
            (define server-msg (channel-get room-chan))
            (match server-msg
-             [(
-
-
-           ))
+             ;; Host should:
+             ;; 1. expect a message from the channel with a new player-chan to communicate
+             ;; 2. transition to a player function, with the necessary channels to switch to after that
+             [(game-not-started)
+              (write server-msg output-port)
+              (handle-room-comms user-id auth-chan lobby-chan room-chan)] ;; FIXME is this better than a loop? worse?
+             [(game-started dealer-chan)
+              (handle-player-comms user-id auth-chan lobby-chan dealer-chan)])]))
 
       (define (handle-guest-comms user-id auth-chan lobby-chan room-chan broadcast-chan)
         (sync
@@ -673,6 +667,10 @@
               [(game-cancelled room-id)
                (write (game-cancelled room-id) output-port)
                (handle-lobby-comms user-id auth-chan lobby-chan)]))))
+
+      (define (handle-player-comms user-id auth-chan lobby-chan dealer-chan)
+        (printf "We made it!\n")
+        (close-ports input-port output-port))
 
       (define recv-chan (make-channel))
       (define input-evt (read-datum-evt input-port))
