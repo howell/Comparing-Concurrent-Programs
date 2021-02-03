@@ -116,14 +116,14 @@
 ;; an Acknowledgement is an (ack)
 (struct ack () #:prefab)
 
-;; a GameStarted is a (game-started [Chan])
-(struct game-started (chan) #:prefab)
+;; a GameStarted is a (game-started)
+(struct game-started () #:prefab)
 
 ;; a GameNotStarted is a (game-not-started)
 (struct game-not-started () #:prefab)
 
-;; a GameHasBegun is a (game-has-begun)
-(struct game-has-begun () #:prefab)
+;; a GameHasBegun is a (game-has-begun RoomID)
+(struct game-has-begun (room) #:prefab)
 
 ;; a DeclarePlayer is a (declare-player PlayerID)
 (struct declare-player (id) #:prefab)

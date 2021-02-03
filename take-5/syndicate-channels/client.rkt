@@ -23,11 +23,14 @@
 
   (printf "created room!\n")
 
-  (sleep 200)
+  (sleep 20)
 
-  ;; (write (logout user-id) o)
-  ;; (define resp (read i))
-  ;; (printf "received this response: ~a\n" resp)
+  (write (start-game) o)
+
+  (define hopefully-game-has-begun-msg (read i))
+  (match hopefully-game-has-begun-msg
+    [(game-started) (printf "woohoo!\n")]
+    [_ (printf "FAILURE\n")])
 
   (close-ports i o))
 
@@ -47,12 +50,10 @@
 
   (printf "Room ~a has been successfully joined!\n" (room-id confirmation-msg))
 
-  (write (leave-room user-id) o)
-
-  (printf "trying to leave room\n")
-  (define ack-msg (read i))
-  (match ack-msg
-    [(ack) (printf "You have left!\n")])
+  (define hopefully-game-has-begun-msg (read i))
+  (match hopefully-game-has-begun-msg
+    [(game-started) (printf "woohoo!\n")]
+    [_ (printf "FAILURE\n")])
 
   (close-ports i o))
 

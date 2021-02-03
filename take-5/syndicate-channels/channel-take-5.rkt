@@ -195,7 +195,7 @@
 ;; There is a conversation about starting the game.
 ;; To start a game, the Host sends a StartGame message to the room. The Room replies
 ;; with a GameNotStarted message if there aren't sufficient players to start the game.
-;; Otherwise, the Room spawns a Dealer that broadcasts a GameStarted message to the
+;; Otherwise, the Room spawns a Dealer that broadcasts a UserGameStarted message to the
 ;; Host and Guests containing the new channel by which they will communicate with
 ;; the Dealer, and a GameHasBegun message to the Lobby. At that point, the Room
 ;; can no longer be communicated with.
@@ -246,7 +246,7 @@
 ;; to the channel that the Game Observer is listening to when the game instance ends.
 
 ;; Deck [List-of PlayerStruct] -> void
-(define (make-dealer initial-deck players)
+#;(define (make-dealer initial-deck players)
   (define game-result-chan (make-channel))
   (define moves-channel (make-channel))
 
@@ -445,6 +445,19 @@
            (make-user input output auth-chan)
            (loop)])))))
 
+;; RoomID [Hash-of UserID Chan] Chan
+(define (make-dealer game-id player-lookup lobby-chan)
+  (thread
+   (thunk
+    (define new-player-lookup
+      (for/hash ([(p-name _) (in-hash player-lookup)])
+        (values p-name (make-channel))))
+
+    (for ([(p-name chan) (in-hash new-player-lookup)])
+      (channel-put (hash-ref player-lookup p-name) (user-game-started chan)))))
+  #f)
+
+
 ;; RoomID [Chan-of LobbyMsg] [Chan-of Room] -> Void
 (define (make-room room-id lobby-chan host-name temp-host-chan)
   (thread
@@ -499,7 +512,7 @@
                       (match-define (guest-room _ _ broadcast-guest-chan) guest-room-msg)
                       (values name broadcast-guest-chan)))
                   (define player-chan-lookup (hash-set guest-chan-lookup host-name host-chan))
-                  (make-dealer player-chan-lookup lobby-chan)])])))))))
+                  (make-dealer room-id player-chan-lookup lobby-chan)])])))))))
 
 ;; -> Void
 (define (make-lobby)
@@ -509,6 +522,7 @@
     (thunk
       (let loop ([sessions (hash)]      ;; [Hash-of UserID Chan]
                  [room-lookup (hash)]   ;; [Hash-of RoomID Chan]
+                 [game-lookup (hash)]   ;; [Hash-of RoomID Chan]
                  [score-lookup (hash)]) ;; [Hash-of RoomID Scores]
 
         (define (handle-user-evt msg)
@@ -517,7 +531,7 @@
              (define room-list (hash-keys room-lookup))
              (log-list-rooms user-id room-list)
              (channel-put (hash-ref sessions user-id) (rooms room-list))
-             (loop sessions room-lookup score-lookup)]
+             (loop sessions room-lookup game-lookup score-lookup)]
 
             [(get-results user-id)
              (define user-results
@@ -527,13 +541,13 @@
 
              ;; TODO add logging method
              (channel-put (hash-ref sessions user-id) (results user-results))
-             (loop sessions room-lookup score-lookup)]
+             (loop sessions room-lookup game-lookup score-lookup)]
 
             [(create-room user-id)
              (define room-id (intern-symbol (gensym user-id)))
              (define room-chan (make-channel))
              (make-room room-id room-chan user-id (hash-ref sessions user-id))
-             (loop sessions (hash-set room-lookup room-id room-chan) score-lookup)]
+             (loop sessions (hash-set room-lookup room-id room-chan) game-lookup score-lookup)]
 
             [(join-room user-id room-id)
              (cond
@@ -543,16 +557,21 @@
                [else
                 (channel-put (hash-ref sessions user-id)
                              (room-not-found))])
-             (loop sessions room-lookup score-lookup)]
+             (loop sessions room-lookup game-lookup score-lookup)]
 
             [(logout user-id)
              (channel-put (hash-ref sessions user-id) (ack))
-             (loop (hash-remove sessions user-id) room-lookup score-lookup)]))
+             (loop (hash-remove sessions user-id) room-lookup game-lookup score-lookup)]))
 
         (define (handle-room-evt msg)
           (match msg
             [(room-terminated room-id)
-             (loop sessions (hash-remove room-lookup room-id) score-lookup)]))
+             (loop sessions (hash-remove room-lookup room-id) game-lookup score-lookup)]
+            [(game-has-begun room-id)
+             (loop sessions
+                   (hash-remove room-lookup room-id)
+                   (hash-set game-lookup room-id (hash-ref room-lookup room-id))
+                   score-lookup)]))
 
         (define user-evts
           (apply choice-evt
@@ -575,6 +594,7 @@
                (channel-put auth-comm-chan (session-created user-comm-chan))
                (loop (hash-set sessions user-id user-comm-chan)
                      room-lookup
+                     game-lookup
                      score-lookup)]))))))
 
   auth-comm-chan)
@@ -649,7 +669,8 @@
              [(game-not-started)
               (write server-msg output-port)
               (handle-room-comms user-id auth-chan lobby-chan room-chan)] ;; FIXME is this better than a loop? worse?
-             [(game-started dealer-chan)
+             [(user-game-started dealer-chan)
+              (write (game-started) output-port)
               (handle-player-comms user-id auth-chan lobby-chan dealer-chan)])]))
 
       (define (handle-guest-comms user-id auth-chan lobby-chan room-chan broadcast-chan)
@@ -658,7 +679,7 @@
             input-evt
             (match-lambda
               [(leave-room user-id)
-               (channel-put room-chan msg)
+               (channel-put room-chan (leave-room user-id))
                (write (channel-get room-chan) output-port)
                (handle-lobby-comms user-id auth-chan lobby-chan)]))
           (handle-evt
@@ -666,10 +687,12 @@
             (match-lambda
               [(game-cancelled room-id)
                (write (game-cancelled room-id) output-port)
-               (handle-lobby-comms user-id auth-chan lobby-chan)]))))
+               (handle-lobby-comms user-id auth-chan lobby-chan)]
+              [(user-game-started dealer-chan)
+               (write (game-started) output-port)
+               (handle-player-comms user-id auth-chan lobby-chan dealer-chan)]))))
 
       (define (handle-player-comms user-id auth-chan lobby-chan dealer-chan)
-        (printf "We made it!\n")
         (close-ports input-port output-port))
 
       (define recv-chan (make-channel))
