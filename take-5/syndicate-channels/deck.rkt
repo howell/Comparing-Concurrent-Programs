@@ -11,6 +11,10 @@
  ;; Nat Deck -> (Values (Listof Card) Deck)
  ;; Remove cards from a deck
  draw
+
+ ;; -> Deck
+ ;; Create a complete starting deck
+ generate-deck
    
  ;; Deck -> (Values Card Deck)
  ;; Remove the first card from the deck
@@ -34,7 +38,7 @@
      (define-values (cs new-new-deck) (draw (sub1 n) new-deck))
      (values (cons c cs) new-new-deck)]))
 
-(define the-deck
+(define (generate-deck)
   (for/list ([i (in-range 1 105)])
     (define bulls
       (cond
@@ -44,3 +48,5 @@
         [(member i '(11 22 33 44 66 77 88 99)) 5]
         [else 1]))
     (card i bulls)))
+
+(define the-deck (generate-deck))

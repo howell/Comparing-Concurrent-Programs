@@ -44,9 +44,6 @@
 ;; a Round is a (round Nat [List-of Card] [List-of Row] [Chan-of Move])
 (struct round (number hand rows move-chan) #:transparent)
 
-;; a PlayerStruct is a (player PlayerID [Chan-of Round])
-(struct player (id chan) #:transparent)
-
 ;; a UserRegister is a (user-register PlayerID [Chan-of UserRegistered])
 (struct user-register (id chan) #:transparent)
 
@@ -77,8 +74,8 @@
 ;; a UserGameStarted is a (user-game-started Chan)
 (struct user-game-started (chan) #:transparent)
 
-;; a DeclaredWinners is a (declared-winner/s [List-of PlayerID])
-(struct declared-winner/s (player/s) #:transparent)
+;; a GameResults is a (game-results Score)
+(struct game-results (scores) #:transparent)
 
 ;; a Select is a (select Symbol Chan)
 (struct select (key reply-chan) #:transparent)
@@ -204,6 +201,15 @@
 ;; To leave a game, a Guest sends a LeaveGame message to the room. The Room replies
 ;; with an Acknowledgement message to the Guest. That Guest can no longer communicate
 ;; with that Room unless the Guest requests to re-join from the Lobby.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Dealer Conversations
+;; --------------------
+;; There is a conversation at the end of a game.
+;; Upon the conclusion of the game, the Dealer sends all Players a GameOver message,
+;; containing the player(s) with the lowest scores in the game. The Dealer sends
+;; the Lobby a GameResults message, containing the Score for that game. Players
+;; then resume conversations with the Lobby, and the Dealer can no longer be
+;; communicated with.
 
 
 
@@ -326,69 +332,78 @@
            (loop)])))))
 
 ;; RoomID [Hash-of UserID Chan] Chan
-(define (make-dealer game-id player-lookup lobby-chan)
+(define (make-dealer game-id initial-player-lookup lobby-chan)
   (thread
    (thunk
-    (define new-player-lookup
-      (for/hash ([(p-name _) (in-hash player-lookup)])
+
+    (channel-put lobby-chan (game-has-begun game-id))
+
+    (define player-lookup
+      (for/hash ([(p-name _) (in-hash initial-player-lookup)])
         (values p-name (make-channel))))
 
-    (for ([(p-name chan) (in-hash new-player-lookup)])
-      (channel-put (hash-ref player-lookup p-name) (user-game-started chan)))
+    (for ([(p-name chan) (in-hash player-lookup)])
+      (channel-put (hash-ref initial-player-lookup p-name) (user-game-started chan)))
 
-    (channel-put lobby-chan (game-has-begun game-id))))
+    ;; an AllMoves is an (all-moves [List-of Move])
+    (struct all-moves (moves) #:prefab)
 
-(define (handle-moves round-number num-players dealer-chan)
-      (define send-moves-chan (make-channel))
-      (thread
-        (thunk
-          (define round-deadline (+ (current-inexact-milliseconds) 1000))
-          (define round-timeout (alarm-evt round-deadline))
+    ;; Runs all 10 rounds of the game and posts the winners to the game results channel
+    ;; [List-of UserID] [List-of Row] [Hash-of UserID Hand] [Hash-of UserID Score] -> Score
+    (define (run-rounds initial-players initial-rows initial-hands initial-scores)
 
-          (define (send-moves-to-dealer moves)
-            (channel-put dealer-chan (all-moves moves)))
+      ;; FIXME is this function necessary? why does it exist?
+      (define (handle-moves round-number num-players dealer-chan)
+        (define send-moves-chan (make-channel))
+        (thread
+         (thunk
+           (define round-deadline (+ (current-inexact-milliseconds) 1000))
+           (define round-timeout (alarm-evt round-deadline))
 
-          ;; send timeout message here
-          (let loop ([moves '()])
-            (sync
-              (handle-evt
-                send-moves-chan
-                (match-lambda
-                  ;; TODO check equality on n?
-                  [(and m (played-in-round pid n c))
-                   (log-move m)
-                   (define new-moves (cons m moves))
-                   (if (= (length new-moves) num-players)
-                     (send-moves-to-dealer new-moves)
-                     (loop new-moves))]))
-              (handle-evt
-                round-timeout
-                (λ (_)
+           (define (send-moves-to-dealer moves)
+           (channel-put dealer-chan (all-moves moves)))
+
+              ;; send timeout message here
+           (let loop ([moves '()])
+             (sync
+               (handle-evt
+                 send-moves-chan
+                 (match-lambda
+                   ;; TODO check equality on n?
+                   [(and m (played-in-round pid n c))
+                    (log-move m)
+                    (define new-moves (cons m moves))
+                    (if (= (length new-moves) num-players)
+                      (send-moves-to-dealer new-moves)
+                      (loop new-moves))]))
+               (handle-evt
+                 round-timeout
+                 (λ (_)
                    (send-moves-to-dealer moves)))))))
-      send-moves-chan)
+        send-moves-chan)
 
-    ;; Loop once for each round
-    (let loop ([players initial-players]
-               [rows initial-rows]
-               [hands initial-hands]
-               [scores initial-scores]
-               [round-count 1])
+      ;; Loop once for each round
+      (let loop ([players initial-players]
+                 [rows initial-rows]
+                 [hands initial-hands]
+                 [scores initial-scores]
+                 [round-count 1])
 
-      (define send-moves-chan (handle-moves round-count (length players) moves-channel))
+        (define send-moves-chan (handle-moves round-count (length players) moves-channel))
 
-      ;; Send a message to players in a separate thread
-      ;; (PlayerStruct -> Any) -> Void
-      (define (send-to-players msg-ctor)
-        (for ([player players])
-          (thread
-            (thunk
-              (channel-put (player-chan player)
-                           (msg-ctor player))))))
+        ;; Send a message to players in a separate thread
+        ;; (PlayerStruct -> Any) -> Void
+        (define (send-to-players msg-ctor)
+          (for ([player players])
+            (thread
+              (thunk
+                (channel-put (hash-ref player-lookup player)
+                             (msg-ctor player))))))
 
       ;; notify all players that they must move
       (send-to-players
         (λ (p)
-           (round round-count (hash-ref hands (player-id p)) rows send-moves-chan)))
+          (round round-count (hash-ref hands p) rows send-moves-chan)))
 
       ;; Get all moves for the round
       (define moves
@@ -411,38 +426,44 @@
       (cond
         [(< round-count 10)
          (define new-hands
-           (for/hash ([move moves])
-             (define pid (played-in-round-player move))
-             (values pid (remove (played-in-round-card move) (hash-ref hands pid)))))
+         (for/hash ([move moves])
+           (define pid (played-in-round-player move))
+           (values pid (remove (played-in-round-card move) (hash-ref hands pid)))))
 
          (define new-players
            (for/list ([p players]
-                     #:when (set-member? players-that-moved (player-id p)))
-             p))
+                      #:when (set-member? players-that-moved p))
+              p))
 
          (loop new-players new-rows new-hands new-scores (+ round-count 1))]
         [else ;; Game is over, determine a winner
-          (define winner/s (lowest-score/s new-scores))
-          (log-winner/s winner/s)
-          (send-to-players (λ (_) (game-over winner/s)))
-          (channel-put game-result-chan (declared-winner/s winner/s))])))
+         (define winner/s (lowest-score/s new-scores))
+         (log-winner/s winner/s)
+         (send-to-players (λ (_) (game-over winner/s)))
+         new-scores])))
 
-  (thread
-    (thunk
-      (define initial-scores (for/hash ([player players]) (values (player-id player) 0)))
-      (define-values (initial-hands deck) (deal (map player-id players) initial-deck))
-      (define-values (starting-rows _)
-        (for/fold ([rows '()]
-                   [curr-deck deck])
-                  ([_ (in-range 4)])
-          (define-values (starting-card new-deck) (draw-one curr-deck))
-          (values (cons (row (list starting-card)) rows) new-deck)))
+    (define game-result-chan (make-channel))
+    (define moves-channel (make-channel))
 
-      (log-rows starting-rows)
+    (define players (hash-keys player-lookup))
+    (define num-players (length players))
 
-      (run-rounds players starting-rows initial-hands initial-scores)))
+    (define initial-scores (for/hash ([player players]) (values player 0)))
+    (define initial-deck (generate-deck))
 
-  #f)
+    (define-values (initial-hands deck) (deal players initial-deck))
+    (define-values (starting-rows _)
+      (for/fold ([rows '()]
+                 [curr-deck deck])
+                ([_ (in-range 4)])
+        (define-values (starting-card new-deck) (draw-one curr-deck))
+        (values (cons (row (list starting-card)) rows) new-deck)))
+
+    ;; FIXME would be great to move this to the `run-rounds` function, or move the setup to a separate function
+    (log-rows starting-rows)
+
+    (define final-result (run-rounds players starting-rows initial-hands initial-scores))
+    (channel-put lobby-chan (game-results final-result)))))
 
 
 ;; RoomID [Chan-of LobbyMsg] [Chan-of Room] -> Void
@@ -489,6 +510,7 @@
                  (match-define (guest-room _user-id _guest-chan broadcast-chan) guest-room-struct)
                  (channel-put broadcast-chan (game-cancelled room-id)))]
               [(start-game)
+               ;; FIXME game should also be prevented if we have > 10 players
                (cond
                  [(= (hash-count guests) 0)
                   (channel-put host-chan (game-not-started))
