@@ -245,22 +245,100 @@
 ;; indicating the end of and results for a game instance. The Dealer posts a DeclaredWinners message
 ;; to the channel that the Game Observer is listening to when the game instance ends.
 
-;; Deck [List-of PlayerStruct] -> void
-#;(define (make-dealer initial-deck players)
-  (define game-result-chan (make-channel))
-  (define moves-channel (make-channel))
+;; Listener -> [List-of Ports]
+(define (accept-connections listener)
+  (define accept-deadline (+ (current-inexact-milliseconds) CONN-DURATION))
+  (define accept-timeout (alarm-evt accept-deadline))
 
-  (struct all-moves (moves) #:prefab)
+  (let loop ([connections '()])
+    (define accept-evt (tcp-accept-evt listener))
+    (sync
+      (handle-evt
+        accept-evt
+        (match-lambda
+          [(list input output)
+           (log-connection)
+           (remove-tcp-buffer input output)
+           (loop (cons (ports input output) connections))]))
+      (handle-evt 
+        accept-timeout
+        (λ (_) connections)))))
 
-  (define num-players (length players))
-  (unless (and (>= num-players 2) (<= num-players 10))
-    (error "Take-5 is played with 2-10 players"))
+;; Listener -> [List-of PlayerStruct]
+;; (define (initialize-players listener)
+;;   (define connections (accept-connections listener))
 
-  ;; Runs all 10 rounds of the game and posts the winners to the game results channel
-  ;; [List-of PlayerStruct] [List-of Row] [Hash-of PlayerID Hand] [Hash-of PlayerID Score] -> void
-  (define (run-rounds initial-players initial-rows initial-hands initial-scores)
+;;   ;; TODO add some timeout here, not sure how to give everybody a chance
+;;   ;; loop through one at a time and see if they're ready to read?
+;;   ;; or, wait one second, then check which ones are ready to read and accept those
+;;   (for/list ([conn connections])
+;;     (match-define (ports input output) conn)
+;;     (match (read input)
+;;       [(declare-player name)
+;;        (log-registration name)
+;;        (make-player name input output)])))
 
-    (define (handle-moves round-number num-players dealer-chan)
+;;;; OLD PLAYER-SERVER CODE ;;;;;;
+  ;; (define round-chan (make-channel))
+  ;; (thread
+  ;;   (thunk
+  ;;     (let loop ()
+  ;;       (define dealer-msg (channel-get round-chan))
+  ;;       (match dealer-msg
+  ;;         [(round number hand rows move-chan)
+  ;;          (write (move-request number hand rows) output-port)
+  ;;          (define move (read input-port))
+  ;;          (match move
+  ;;            [(played-in-round _ _ _)
+  ;;             (channel-put move-chan move)
+  ;;             (loop)])]
+  ;;         [(game-over _)
+  ;;          (write dealer-msg output-port)
+  ;;          (close-ports input-port output-port)]))))
+  ;; (player name round-chan))
+
+;; -> void
+;; (define (play-game)
+;;   (define server (tcp-listen CONNECT-PORT))
+;;   (define players (initialize-players server))
+
+;;   (define game-result-chan (make-dealer (shuffle the-deck) players))
+;;   (channel-get game-result-chan)
+
+;;   (sleep 1)
+;;   (tcp-close server))
+
+
+;;;;;;;;;;;;;;;;; EXTENDED VERSION ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Listener [Chan-of UserRegister] -> Void
+(define (create-clients listener auth-chan)
+  (let loop ()
+    (define accept-evt (tcp-accept-evt listener))
+    (sync
+      (handle-evt
+        accept-evt
+        (match-lambda
+          [(list input output)
+           (log-connection)
+           (remove-tcp-buffer input output)
+           (make-user input output auth-chan)
+           (loop)])))))
+
+;; RoomID [Hash-of UserID Chan] Chan
+(define (make-dealer game-id player-lookup lobby-chan)
+  (thread
+   (thunk
+    (define new-player-lookup
+      (for/hash ([(p-name _) (in-hash player-lookup)])
+        (values p-name (make-channel))))
+
+    (for ([(p-name chan) (in-hash new-player-lookup)])
+      (channel-put (hash-ref player-lookup p-name) (user-game-started chan)))
+
+    (channel-put lobby-chan (game-has-begun game-id))))
+
+(define (handle-moves round-number num-players dealer-chan)
       (define send-moves-chan (make-channel))
       (thread
         (thunk
@@ -363,98 +441,7 @@
       (log-rows starting-rows)
 
       (run-rounds players starting-rows initial-hands initial-scores)))
-  game-result-chan)
 
-;; Listener -> [List-of Ports]
-(define (accept-connections listener)
-  (define accept-deadline (+ (current-inexact-milliseconds) CONN-DURATION))
-  (define accept-timeout (alarm-evt accept-deadline))
-
-  (let loop ([connections '()])
-    (define accept-evt (tcp-accept-evt listener))
-    (sync
-      (handle-evt
-        accept-evt
-        (match-lambda
-          [(list input output)
-           (log-connection)
-           (remove-tcp-buffer input output)
-           (loop (cons (ports input output) connections))]))
-      (handle-evt 
-        accept-timeout
-        (λ (_) connections)))))
-
-;; Listener -> [List-of PlayerStruct]
-;; (define (initialize-players listener)
-;;   (define connections (accept-connections listener))
-
-;;   ;; TODO add some timeout here, not sure how to give everybody a chance
-;;   ;; loop through one at a time and see if they're ready to read?
-;;   ;; or, wait one second, then check which ones are ready to read and accept those
-;;   (for/list ([conn connections])
-;;     (match-define (ports input output) conn)
-;;     (match (read input)
-;;       [(declare-player name)
-;;        (log-registration name)
-;;        (make-player name input output)])))
-
-;;;; OLD PLAYER-SERVER CODE ;;;;;;
-  ;; (define round-chan (make-channel))
-  ;; (thread
-  ;;   (thunk
-  ;;     (let loop ()
-  ;;       (define dealer-msg (channel-get round-chan))
-  ;;       (match dealer-msg
-  ;;         [(round number hand rows move-chan)
-  ;;          (write (move-request number hand rows) output-port)
-  ;;          (define move (read input-port))
-  ;;          (match move
-  ;;            [(played-in-round _ _ _)
-  ;;             (channel-put move-chan move)
-  ;;             (loop)])]
-  ;;         [(game-over _)
-  ;;          (write dealer-msg output-port)
-  ;;          (close-ports input-port output-port)]))))
-  ;; (player name round-chan))
-
-;; -> void
-;; (define (play-game)
-;;   (define server (tcp-listen CONNECT-PORT))
-;;   (define players (initialize-players server))
-
-;;   (define game-result-chan (make-dealer (shuffle the-deck) players))
-;;   (channel-get game-result-chan)
-
-;;   (sleep 1)
-;;   (tcp-close server))
-
-
-;;;;;;;;;;;;;;;;; EXTENDED VERSION ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;; Listener [Chan-of UserRegister] -> Void
-(define (create-clients listener auth-chan)
-  (let loop ()
-    (define accept-evt (tcp-accept-evt listener))
-    (sync
-      (handle-evt
-        accept-evt
-        (match-lambda
-          [(list input output)
-           (log-connection)
-           (remove-tcp-buffer input output)
-           (make-user input output auth-chan)
-           (loop)])))))
-
-;; RoomID [Hash-of UserID Chan] Chan
-(define (make-dealer game-id player-lookup lobby-chan)
-  (thread
-   (thunk
-    (define new-player-lookup
-      (for/hash ([(p-name _) (in-hash player-lookup)])
-        (values p-name (make-channel))))
-
-    (for ([(p-name chan) (in-hash new-player-lookup)])
-      (channel-put (hash-ref player-lookup p-name) (user-game-started chan)))))
   #f)
 
 
@@ -663,9 +650,6 @@
            (channel-put room-chan client-msg)
            (define server-msg (channel-get room-chan))
            (match server-msg
-             ;; Host should:
-             ;; 1. expect a message from the channel with a new player-chan to communicate
-             ;; 2. transition to a player function, with the necessary channels to switch to after that
              [(game-not-started)
               (write server-msg output-port)
               (handle-room-comms user-id auth-chan lobby-chan room-chan)] ;; FIXME is this better than a loop? worse?
