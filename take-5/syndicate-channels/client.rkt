@@ -8,6 +8,16 @@
 (define (create-connection)
   (tcp-connect CONNECT-HOSTNAME CONNECT-PORT))
 
+
+(define (handle-playing-game user-id input-port output-port)
+  (define game-msg (read input-port))
+  (match game-msg
+    [(move-request round-no hand rows)
+     (write (played-in-round user-id round-no (random-player hand rows)) output-port)
+     (handle-playing-game user-id input-port output-port)]
+    [(game-over winners)
+     (printf "WOWOWOWOWOW the winners are ~a\n" winners)]))
+
 ;; UserID -> Void
 (define (create-client user-id)
   (define-values (i o) (create-connection))
@@ -28,11 +38,13 @@
   (write (start-game) o)
 
   (define hopefully-game-has-begun-msg (read i))
+
   (match hopefully-game-has-begun-msg
-    [(game-started) (printf "woohoo!\n")]
+    [(game-started) (printf "woohoo!\n") (handle-playing-game user-id i o)]
     [_ (printf "FAILURE\n")])
 
   (close-ports i o))
+
 
 (define (create-joining-client user-id)
   (define-values (i o) (create-connection))
@@ -52,7 +64,7 @@
 
   (define hopefully-game-has-begun-msg (read i))
   (match hopefully-game-has-begun-msg
-    [(game-started) (printf "woohoo!\n")]
+    [(game-started) (printf "woohoo!\n") (handle-playing-game user-id i o)]
     [_ (printf "FAILURE\n")])
 
   (close-ports i o))

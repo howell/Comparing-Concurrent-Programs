@@ -19,6 +19,9 @@
  ;; Rows -> Void
  log-rows
 
+ ;; (Hash-of PlayerId (List-of Card)) -> Void
+ log-hands
+
  ;; Move -> Void
  log-move
 
@@ -32,7 +35,9 @@
  log-player-decision
 
  ;; (Setof PlayerId) -> Void
- log-elimination)
+ log-elimination
+
+ log-take-5-debug)
 
 ;; ---------------------------------------------------------------------------------------------------
 (require "rules.rkt")
@@ -65,6 +70,11 @@
 (define (log-rows rows)
   (log-take-5-debug "The current rows are:\n\t~v\n\t~v\n\t~v\n\t~v"
                     (first rows) (second rows) (third rows) (fourth rows)))
+
+(define (log-hands hands)
+  (log-take-5-debug "The current hands are:")
+  (for ([(p hand) (in-hash hands)])
+    (log-take-5-debug "\n\t~a: ~v" p hand)))
 
 (define (log-player-decision pid c hand)
   (log-take-5-debug "~a chooses card ~v from hand ~v" pid c hand))

@@ -15,6 +15,10 @@
  ;; -> Deck
  ;; Create a complete starting deck
  generate-deck
+
+ ;; Deck -> Deck
+ ;; Randomize the order of cards in the deck
+ shuffle-deck
    
  ;; Deck -> (Values Card Deck)
  ;; Remove the first card from the deck
@@ -48,5 +52,8 @@
         [(member i '(11 22 33 44 66 77 88 99)) 5]
         [else 1]))
     (card i bulls)))
+
+(define (shuffle-deck deck)
+  (shuffle deck))
 
 (define the-deck (generate-deck))

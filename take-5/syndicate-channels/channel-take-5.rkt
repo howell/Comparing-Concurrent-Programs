@@ -41,9 +41,6 @@
 ;; - Data
 ;; - Insert
 
-;; a Round is a (round Nat [List-of Card] [List-of Row] [Chan-of Move])
-(struct round (number hand rows move-chan) #:transparent)
-
 ;; a UserRegister is a (user-register PlayerID [Chan-of UserRegistered])
 (struct user-register (id chan) #:transparent)
 
@@ -74,8 +71,8 @@
 ;; a UserGameStarted is a (user-game-started Chan)
 (struct user-game-started (chan) #:transparent)
 
-;; a GameResults is a (game-results Score)
-(struct game-results (scores) #:transparent)
+;; a GameResults is a (game-results RoomID Score)
+(struct game-results (room-id scores) #:transparent)
 
 ;; a Select is a (select Symbol Chan)
 (struct select (key reply-chan) #:transparent)
@@ -251,72 +248,6 @@
 ;; indicating the end of and results for a game instance. The Dealer posts a DeclaredWinners message
 ;; to the channel that the Game Observer is listening to when the game instance ends.
 
-;; Listener -> [List-of Ports]
-(define (accept-connections listener)
-  (define accept-deadline (+ (current-inexact-milliseconds) CONN-DURATION))
-  (define accept-timeout (alarm-evt accept-deadline))
-
-  (let loop ([connections '()])
-    (define accept-evt (tcp-accept-evt listener))
-    (sync
-      (handle-evt
-        accept-evt
-        (match-lambda
-          [(list input output)
-           (log-connection)
-           (remove-tcp-buffer input output)
-           (loop (cons (ports input output) connections))]))
-      (handle-evt 
-        accept-timeout
-        (λ (_) connections)))))
-
-;; Listener -> [List-of PlayerStruct]
-;; (define (initialize-players listener)
-;;   (define connections (accept-connections listener))
-
-;;   ;; TODO add some timeout here, not sure how to give everybody a chance
-;;   ;; loop through one at a time and see if they're ready to read?
-;;   ;; or, wait one second, then check which ones are ready to read and accept those
-;;   (for/list ([conn connections])
-;;     (match-define (ports input output) conn)
-;;     (match (read input)
-;;       [(declare-player name)
-;;        (log-registration name)
-;;        (make-player name input output)])))
-
-;;;; OLD PLAYER-SERVER CODE ;;;;;;
-  ;; (define round-chan (make-channel))
-  ;; (thread
-  ;;   (thunk
-  ;;     (let loop ()
-  ;;       (define dealer-msg (channel-get round-chan))
-  ;;       (match dealer-msg
-  ;;         [(round number hand rows move-chan)
-  ;;          (write (move-request number hand rows) output-port)
-  ;;          (define move (read input-port))
-  ;;          (match move
-  ;;            [(played-in-round _ _ _)
-  ;;             (channel-put move-chan move)
-  ;;             (loop)])]
-  ;;         [(game-over _)
-  ;;          (write dealer-msg output-port)
-  ;;          (close-ports input-port output-port)]))))
-  ;; (player name round-chan))
-
-;; -> void
-;; (define (play-game)
-;;   (define server (tcp-listen CONNECT-PORT))
-;;   (define players (initialize-players server))
-
-;;   (define game-result-chan (make-dealer (shuffle the-deck) players))
-;;   (channel-get game-result-chan)
-
-;;   (sleep 1)
-;;   (tcp-close server))
-
-
-;;;;;;;;;;;;;;;;; EXTENDED VERSION ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
 ;; Listener [Chan-of UserRegister] -> Void
 (define (create-clients listener auth-chan)
   (let loop ()
@@ -345,41 +276,19 @@
     (for ([(p-name chan) (in-hash player-lookup)])
       (channel-put (hash-ref initial-player-lookup p-name) (user-game-started chan)))
 
-    ;; an AllMoves is an (all-moves [List-of Move])
-    (struct all-moves (moves) #:prefab)
-
     ;; Runs all 10 rounds of the game and posts the winners to the game results channel
     ;; [List-of UserID] [List-of Row] [Hash-of UserID Hand] [Hash-of UserID Score] -> Score
     (define (run-rounds initial-players initial-rows initial-hands initial-scores)
 
-      ;; FIXME is this function necessary? why does it exist?
-      (define (handle-moves round-number num-players dealer-chan)
+      (define (move-handler round-number dealer-chan p msg-ctor)
         (define send-moves-chan (make-channel))
         (thread
          (thunk
-           (define round-deadline (+ (current-inexact-milliseconds) 1000))
-           (define round-timeout (alarm-evt round-deadline))
-
-           (define (send-moves-to-dealer moves)
-           (channel-put dealer-chan (all-moves moves)))
-
-              ;; send timeout message here
-           (let loop ([moves '()])
-             (sync
-               (handle-evt
-                 send-moves-chan
-                 (match-lambda
-                   ;; TODO check equality on n?
-                   [(and m (played-in-round pid n c))
-                    (log-move m)
-                    (define new-moves (cons m moves))
-                    (if (= (length new-moves) num-players)
-                      (send-moves-to-dealer new-moves)
-                      (loop new-moves))]))
-               (handle-evt
-                 round-timeout
-                 (λ (_)
-                   (send-moves-to-dealer moves)))))))
+          (define player-chan (hash-ref player-lookup p))
+          ;; send the message to the player
+          (channel-put player-chan (msg-ctor p))
+          (let ([m (channel-get player-chan)])
+            (channel-put send-moves-chan m))))
         send-moves-chan)
 
       ;; Loop once for each round
@@ -388,8 +297,6 @@
                  [hands initial-hands]
                  [scores initial-scores]
                  [round-count 1])
-
-        (define send-moves-chan (handle-moves round-count (length players) moves-channel))
 
         ;; Send a message to players in a separate thread
         ;; (PlayerStruct -> Any) -> Void
@@ -400,47 +307,66 @@
                 (channel-put (hash-ref player-lookup player)
                              (msg-ctor player))))))
 
-      ;; notify all players that they must move
-      (send-to-players
-        (λ (p)
-          (round round-count (hash-ref hands p) rows send-moves-chan)))
+        (define (process-results moves)
+          (define players-that-moved
+            (for/set ([m moves])
+              (played-in-round-player m)))
+          (define filtered-scores
+            (for/hash ([(pid score) (in-hash scores)]
+                     #:when (set-member? players-that-moved pid))
+              (values pid score)))
 
-      ;; Get all moves for the round
-      (define moves
-        (match (channel-get moves-channel)
-          [(all-moves moves) moves]))
+          (define-values (new-rows new-scores) (play-round rows moves filtered-scores))
+          (log-rows new-rows)
+          (log-scores new-scores)
 
-      (define players-that-moved
-        (for/set ([m moves])
-          (played-in-round-player m)))
+          (cond
+            [(< round-count 10)
+             (define new-hands
+             (for/hash ([move moves])
+               (define pid (played-in-round-player move))
+               (values pid (remove (played-in-round-card move) (hash-ref hands pid)))))
 
-      (define filtered-scores
-        (for/hash ([(pid score) (in-hash scores)]
-                   #:when (set-member? players-that-moved pid))
-          (values pid score)))
+             (define new-players
+               (for/list ([p players]
+                          #:when (set-member? players-that-moved p))
+                  p))
 
-      (define-values (new-rows new-scores) (play-round rows moves filtered-scores))
-      (log-rows new-rows)
-      (log-scores new-scores)
+             (loop new-players new-rows new-hands new-scores (+ round-count 1))]
+            [else ;; Game is over, determine a winner
+             (define winner/s (lowest-score/s new-scores))
+             (log-winner/s winner/s)
+             ;; this is now the only place that uses this `send-to-players` function, maybe you should toss it.
+             (send-to-players (λ (_) (game-over winner/s)))
+             new-scores]))
 
-      (cond
-        [(< round-count 10)
-         (define new-hands
-         (for/hash ([move moves])
-           (define pid (played-in-round-player move))
-           (values pid (remove (played-in-round-card move) (hash-ref hands pid)))))
+        (define round-deadline (+ (current-inexact-milliseconds) 10000))
+        (define round-timeout (alarm-evt round-deadline))
 
-         (define new-players
-           (for/list ([p players]
-                      #:when (set-member? players-that-moved p))
-              p))
+        (define move-handlers
+          (for/list ([p players])
+            (move-handler round-count moves-channel p
+                          (λ (p) (move-request round-count (hash-ref hands p) rows)))))
 
-         (loop new-players new-rows new-hands new-scores (+ round-count 1))]
-        [else ;; Game is over, determine a winner
-         (define winner/s (lowest-score/s new-scores))
-         (log-winner/s winner/s)
-         (send-to-players (λ (_) (game-over winner/s)))
-         new-scores])))
+        (let loop ([moves '()])
+
+            (define (handle-move-evt msg)
+              (match msg
+                [(played-in-round pid n c)
+                 (log-move msg)
+                 (define new-moves (cons msg moves))
+                 (if (= (length new-moves) num-players)
+                   (process-results new-moves)
+                   (loop new-moves))]))
+
+            (define move-evts
+              (apply choice-evt
+                     (map (λ (handler-chan) (handle-evt handler-chan handle-move-evt))
+                          move-handlers)))
+
+            (sync move-evts
+                  (handle-evt round-timeout
+                              (λ (_) (process-results moves)))))))
 
     (define game-result-chan (make-channel))
     (define moves-channel (make-channel))
@@ -449,7 +375,7 @@
     (define num-players (length players))
 
     (define initial-scores (for/hash ([player players]) (values player 0)))
-    (define initial-deck (generate-deck))
+    (define initial-deck (shuffle-deck (generate-deck)))
 
     (define-values (initial-hands deck) (deal players initial-deck))
     (define-values (starting-rows _)
@@ -463,7 +389,7 @@
     (log-rows starting-rows)
 
     (define final-result (run-rounds players starting-rows initial-hands initial-scores))
-    (channel-put lobby-chan (game-results final-result)))))
+    (channel-put lobby-chan (game-results game-id final-result)))))
 
 
 ;; RoomID [Chan-of LobbyMsg] [Chan-of Room] -> Void
@@ -582,6 +508,14 @@
                    (hash-set game-lookup room-id (hash-ref room-lookup room-id))
                    score-lookup)]))
 
+        (define (handle-game-evt msg)
+          (match msg
+            [(game-results room-id score)
+             (loop sessions
+                   room-lookup
+                   (hash-remove game-lookup room-id)
+                   (hash-set score-lookup room-id score))]))
+
         (define user-evts
           (apply choice-evt
                  (map (λ (chan) (handle-evt chan handle-user-evt))
@@ -592,9 +526,15 @@
                  (map (λ (chan) (handle-evt chan handle-room-evt))
                       (hash-values room-lookup))))
 
+        (define game-evts
+          (apply choice-evt
+                 (map (λ (chan) (handle-evt chan handle-game-evt))
+                      (hash-values game-lookup))))
+
         (sync
           user-evts
           room-evts
+          game-evts
           (handle-evt
             auth-comm-chan
             (match-lambda
@@ -699,7 +639,18 @@
                (handle-player-comms user-id auth-chan lobby-chan dealer-chan)]))))
 
       (define (handle-player-comms user-id auth-chan lobby-chan dealer-chan)
-        (close-ports input-port output-port))
+        (define dealer-msg (channel-get dealer-chan))
+        (match dealer-msg
+          [(move-request _ _ _)
+           (write dealer-msg output-port)
+           (define client-msg (channel-get input-evt))
+           (match client-msg
+             [(played-in-round _ _ _)
+              (channel-put dealer-chan client-msg)
+              (handle-player-comms user-id auth-chan lobby-chan dealer-chan)])]
+          [(game-over winners)
+           (write dealer-msg output-port)
+           (handle-lobby-comms user-id auth-chan lobby-chan)]))
 
       (define recv-chan (make-channel))
       (define input-evt (read-datum-evt input-port))
@@ -737,6 +688,7 @@
         (define (handle-login msg)
           (match msg
             [(login id token)
+             (log-take-5-debug "THE USER ID IS: ~a\n" id)
              (log-login id)
              (when (symbol=? token (hash-ref user-tokens id))
                (channel-put lobby-chan (create-session id))
