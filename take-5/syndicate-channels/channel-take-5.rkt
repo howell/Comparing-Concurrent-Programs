@@ -450,15 +450,19 @@
                   (make-dealer room-id player-chan-lookup lobby-chan)])])))))))
 
 ;; -> Void
-(define (make-lobby)
+(define (make-lobby db-chan)
   (define auth-comm-chan (make-channel))
 
   (thread
     (thunk
+      (define db-resp-chan (make-channel))
+      (channel-put db-chan (select RESULTS-INFO db-resp-chan))
+      (match-define (data saved-scores) (channel-get db-resp-chan))
       (let loop ([sessions (hash)]      ;; [Hash-of UserID Chan]
                  [room-lookup (hash)]   ;; [Hash-of RoomID Chan]
                  [game-lookup (hash)]   ;; [Hash-of RoomID Chan]
-                 [score-lookup (hash)]) ;; [Hash-of RoomID Scores]
+                 [score-lookup          ;; [Hash-of RoomID Scores]
+                  (or saved-scores (hash))])
 
         (define (handle-user-evt msg)
           (match msg
@@ -511,10 +515,20 @@
         (define (handle-game-evt msg)
           (match msg
             [(game-results room-id score)
-             (loop sessions
+             (let ([new-scores (hash-set score-lookup room-id score)]
+                   [db-resp-chan (make-channel)])
+               (channel-put db-chan (insert RESULTS-INFO new-scores db-resp-chan))
+               (match (channel-get db-resp-chan)
+                 [(ack)
+                  (loop sessions
                    room-lookup
                    (hash-remove game-lookup room-id)
-                   (hash-set score-lookup room-id score))]))
+                   new-scores)]))]))
+             ;; (channel-put db-chan (insert RESULTS-INFO ))
+             ;; (loop sessions
+             ;;       room-lookup
+             ;;       (hash-remove game-lookup room-id)
+             ;;       (hash-set score-lookup room-id score))]))
 
         (define user-evts
           (apply choice-evt
@@ -751,7 +765,7 @@
 
 (define general-chan (make-channel))
 (define db-chan (make-database "db.info"))
-(define lobby-chan (make-lobby))
+(define lobby-chan (make-lobby db-chan))
 (define server (tcp-listen CONNECT-PORT))
 
 (define auth-chan (make-authentication-manager lobby-chan db-chan))

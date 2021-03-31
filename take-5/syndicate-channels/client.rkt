@@ -23,14 +23,6 @@
   (define-values (i o) (create-connection))
   (remove-tcp-buffer i o)
 
-  ;; Idea:
-  ;; create a loop where this player
-  ;; 1. prints their results
-  ;; 2. creates a room
-  ;; 3. starts it once someone has joined
-  ;; 4. plays
-  ;; 5. goes back to lobby and restarts loop
-
   (sleep 1) ;; FIXME race due to spawning reader thread for syndicate driver
 
   (define token (authenticate user-id i o))
@@ -55,21 +47,6 @@
 
     (handle-playing-game user-id i o)
     (loop))
-
-  ;; (write (create-room user-id) o)
-  ;; (define resp (read i))
-
-  ;; (printf "created room!\n")
-
-  ;; (sleep 20)
-
-  ;; (write (start-game) o)
-
-  ;; (define hopefully-game-has-begun-msg (read i))
-
-  ;; (match hopefully-game-has-begun-msg
-  ;;   [(game-started) (printf "woohoo!\n") (handle-playing-game user-id i o)]
-  ;;   [_ (printf "FAILURE\n")])
 
   (close-ports i o))
 
@@ -106,19 +83,6 @@
 
       (handle-playing-game user-id i o)
       (loop)))
-
-  ;; (write (list-rooms user-id) o)
-  ;; (define rooms-msg (read i))
-
-  ;; (write (join-room user-id (first (rooms-items rooms-msg))) o)
-  ;; (define confirmation-msg (read i))
-
-  ;; (printf "Room ~a has been successfully joined!\n" (room-id confirmation-msg))
-
-  ;; (define hopefully-game-has-begun-msg (read i))
-  ;; (match hopefully-game-has-begun-msg
-  ;;   [(game-started) (printf "woohoo!\n") (handle-playing-game user-id i o)]
-  ;;   [_ (printf "FAILURE\n")])
 
   (close-ports i o))
 
