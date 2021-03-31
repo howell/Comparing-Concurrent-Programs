@@ -23,25 +23,53 @@
   (define-values (i o) (create-connection))
   (remove-tcp-buffer i o)
 
+  ;; Idea:
+  ;; create a loop where this player
+  ;; 1. prints their results
+  ;; 2. creates a room
+  ;; 3. starts it once someone has joined
+  ;; 4. plays
+  ;; 5. goes back to lobby and restarts loop
+
   (sleep 1) ;; FIXME race due to spawning reader thread for syndicate driver
 
   (define token (authenticate user-id i o))
   (printf "login token is: ~a\n" token)
 
-  (write (create-room user-id) o)
-  (define resp (read i))
+  (let loop ()
+    (write (get-results user-id) o)
+    (match (read i)
+      [(results res)
+       (printf "results from games including player ~a: ~a\n" user-id res)])
 
-  (printf "created room!\n")
+    (write (create-room user-id) o)
+    (match (read i)
+      [(room room-id)
+       (printf "User ~a has successfully created room ~a\n" user-id room-id)])
 
-  (sleep 20)
+    (sleep 10)
 
-  (write (start-game) o)
+    (write (start-game) o)
+    (match (read i)
+      [(game-started) (printf "Game has started for player ~a\n" user-id)])
 
-  (define hopefully-game-has-begun-msg (read i))
+    (handle-playing-game user-id i o)
+    (loop))
 
-  (match hopefully-game-has-begun-msg
-    [(game-started) (printf "woohoo!\n") (handle-playing-game user-id i o)]
-    [_ (printf "FAILURE\n")])
+  ;; (write (create-room user-id) o)
+  ;; (define resp (read i))
+
+  ;; (printf "created room!\n")
+
+  ;; (sleep 20)
+
+  ;; (write (start-game) o)
+
+  ;; (define hopefully-game-has-begun-msg (read i))
+
+  ;; (match hopefully-game-has-begun-msg
+  ;;   [(game-started) (printf "woohoo!\n") (handle-playing-game user-id i o)]
+  ;;   [_ (printf "FAILURE\n")])
 
   (close-ports i o))
 
@@ -50,22 +78,47 @@
   (define-values (i o) (create-connection))
   (remove-tcp-buffer i o)
 
-  (sleep 5) ;; FIXME race due to spawning reader thread for syndicate driver
+  (sleep 1) ;; FIXME race due to spawning reader thread for syndicate driver
 
   (define token (authenticate user-id i o))
 
-  (write (list-rooms user-id) o)
-  (define rooms-msg (read i))
+  (let loop ()
+    (write (get-results user-id) o)
+    (match (read i)
+      [(results res)
+       (printf "results from games including player ~a: ~a\n" user-id res)])
 
-  (write (join-room user-id (first (rooms-items rooms-msg))) o)
-  (define confirmation-msg (read i))
+    (sleep 5)
 
-  (printf "Room ~a has been successfully joined!\n" (room-id confirmation-msg))
+    (write (list-rooms user-id) o)
+    (let* ([rooms-msg (read i)]
+           [open-rooms (rooms-items rooms-msg)]
+           [first-open-room (first open-rooms)])
+      (printf "Open rooms: ~a\n" open-rooms)
+      (printf "User ~a will join room ~a\n" user-id first-open-room)
 
-  (define hopefully-game-has-begun-msg (read i))
-  (match hopefully-game-has-begun-msg
-    [(game-started) (printf "woohoo!\n") (handle-playing-game user-id i o)]
-    [_ (printf "FAILURE\n")])
+      (write (join-room user-id first-open-room) o)
+      (match (read i)
+        [(room _) (printf "Room ~a successfully joined by user ~a\n" first-open-room user-id)])
+
+      (match (read i)
+        [(game-started) (printf "Game has started for player ~a\n" user-id)])
+
+      (handle-playing-game user-id i o)
+      (loop)))
+
+  ;; (write (list-rooms user-id) o)
+  ;; (define rooms-msg (read i))
+
+  ;; (write (join-room user-id (first (rooms-items rooms-msg))) o)
+  ;; (define confirmation-msg (read i))
+
+  ;; (printf "Room ~a has been successfully joined!\n" (room-id confirmation-msg))
+
+  ;; (define hopefully-game-has-begun-msg (read i))
+  ;; (match hopefully-game-has-begun-msg
+  ;;   [(game-started) (printf "woohoo!\n") (handle-playing-game user-id i o)]
+  ;;   [_ (printf "FAILURE\n")])
 
   (close-ports i o))
 

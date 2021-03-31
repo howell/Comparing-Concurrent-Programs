@@ -35,9 +35,7 @@
  log-player-decision
 
  ;; (Setof PlayerId) -> Void
- log-elimination
-
- log-take-5-debug)
+ log-elimination)
 
 ;; ---------------------------------------------------------------------------------------------------
 (require "rules.rkt")

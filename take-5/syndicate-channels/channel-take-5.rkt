@@ -688,7 +688,6 @@
         (define (handle-login msg)
           (match msg
             [(login id token)
-             (log-take-5-debug "THE USER ID IS: ~a\n" id)
              (log-login id)
              (when (symbol=? token (hash-ref user-tokens id))
                (channel-put lobby-chan (create-session id))
