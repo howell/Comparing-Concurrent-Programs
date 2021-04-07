@@ -6,6 +6,8 @@
 (require "rules.rkt")
 (require "struct.rkt")
 
+;; FIXME I suspect much of the below is wrong
+
 ;; a PlayerID is a Symbol
 ;; a Hand is a [List-of Card]
 ;; a Score is a Nat
@@ -44,7 +46,7 @@
 ;; a UserRegister is a (user-register PlayerID [Chan-of UserRegistered])
 (struct user-register (id chan) #:transparent)
 
-;; a UserRegistered is a (user-registered Token [Chan-of Login])
+;; a UserRegistered is a (user-registered Token [Chan-of LobbyMsg])
 (struct user-registered (token chan) #:transparent)
 
 ;; a CreateSession is a (create-session UserID)
@@ -52,6 +54,9 @@
 
 ;; a SessionCreated is a (session-created [Chan-of LobbyMsg])
 (struct session-created (chan) #:transparent)
+
+;; a UserLogin is a (user-login UserID [Chan-of UserLoggedIn])
+(struct user-login (id token chan) #:transparent)
 
 ;; a UserLoggedIn is a (user-logged-in [Chan-of LobbyMsg])
 (struct user-logged-in (lobby-chan) #:transparent)
@@ -109,17 +114,23 @@
 ;; There is a conversation about registration.
 ;; Users register for a user account by sending a UserRegister message to the 
 ;; Authentication Manager, including the UserID of the User and the Channel on 
-;; which to receive replies. The Authentication manager sends back a UserRegistered
-;; message, containing the UserToken corresponding to the User that that User must
-;; use to Log-in, and a new channel for all future communication.
+;; which to receive replies. If the UserID is unique, then the Authentication Manager
+;; sends a CreateSession message to the Protected Component, containing the UserID
+;; of the User registering. The Protected Component sends back a SessionCreated message,
+;; containing a Channel for communication with a User. the Authentication Manager
+;; forwards this channel to the user in a UserRegistered message, which also contains
+;; a unique password for the new user. If the UserID was not unique, then the
+;; Authentication Manager sends back a TakenId message, containing the already claimed
+;; UserID.
 ;; 
 ;; There is a conversation about login.
-;; Users send a Login message to the Authentication Manager containing their UserID
-;; and their UserToken. If the UserToken correctly corresponds to the UserID, then the
-;; Authentication Manager sends a CreateSession message to the Protected Component,
-;; containing the UserID of the User logging in. The Protected Component sends back
-;; a SessionCreated message, containing a Channel for communication with a User. The
-;; Authentication Manager forwards this channel to the user in a UserLoggedIn message.
+;; Users send a Login message to the Authentication Manager containing their UserID,
+;; their UserToken, and a Channel on which to receive replies. If the UserToken correctly
+;; corresponds to the UserID, then the Authentication Manager sends a CreateSession
+;; message to the Protected Component, containing the UserID of the User logging in.
+;; The Protected Component sends back a SessionCreated message, containing a Channel for
+;; communication with a User. The Authentication Manager forwards this channel to the
+;; user in a UserLoggedIn message.
 ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Lobby Conversations
@@ -207,46 +218,22 @@
 ;; the Lobby a GameResults message, containing the Score for that game. Players
 ;; then resume conversations with the Lobby, and the Dealer can no longer be
 ;; communicated with.
-
-
-
-
-;; There are two conversations regarding playing the game:
-;; To play a round of the game, the Dealer sends each Player a Round message
-;; containing the Player's hand, the current rows, and a channel for posting
-;; Move messages to. A Player makes a move by sending a Move message to that
-;; channel, containing the PlayerID of the Player, the current round number, and
-;; the card that the Player has selected from their hand to play.
-;; The Dealer leads 10 rounds in sequence in this way.
 ;;
-;; Rules/Assumptions for this conversation:
-;; 1. Players only play cards in their Hand
-;; 2. Players send Move messages with their own PlayerID only
-;; 3. Players only send one Move message per round
-;;
-;; There is a conversation about the result of the game. Upon the conclusion of
-;; the game, the Dealer sends a GameResult message to all Players and the Lobby.
-;; The Dealer terminates and cannot be communicated with any further.
-
-;; Conversations
-;; There is a conversation about playing one round of the game. The Dealer starts a round
-;; by sending each participating Player a Round message on the corresponding Player's
-;; personal channel, containing the Player's hand, the current rows, and the a channel
-;; provided by the Dealer for posting Move messages to. A Player makes a move by sending
-;; a Move message to that channel, containing the PlayerID of the Player, the current
-;; round number, and the card that the Player has selected from their hand to play.
-;;
-;; The Dealer leads 10 rounds, in sequence, in this way.
-;;
-;; Rules/Assumptions for this conversation:
-;; 1. Players only play cards in their Hand
-;; 2. Players send Move messages with their own PlayerID only
-;; 3. Players only send one Move message per round
+;; There is a conversation about playing a round of the game.
+;; At the beginning of the round, the Dealer sends all active Players a MoveRequest
+;; message, containing the current round number, the current hand of cards for
+;; that Player, and the current rows. Players reply with a PlayedInRound message,
+;; containing the Player's ID, the current round number, and the card the Player
+;; has selected from their hand. If a Player hasn't replied within the time limit,
+;; they are removed for the remainder of the game.
 ;; 
-;; There is a conversation about the result of the game. The Game Observer observes a channel
-;; for a DeclaredWinners message, containing the players from that game with the lowest scores,
-;; indicating the end of and results for a game instance. The Dealer posts a DeclaredWinners message
-;; to the channel that the Game Observer is listening to when the game instance ends.
+;; The Dealer expects Players to follow these rules:
+;; 1. Players only select a card from their own Hand
+;; 2. The RoundNumber in a player's reply matches the RoundNumber sent by the Dealer
+;; 3. Players only play moves with their own PlayerID
+;; 4. Players only make one move per round
+;;
+;; The Dealer leads 10 rounds of the game.
 
 ;; Listener [Chan-of UserRegister] -> Void
 (define (create-clients listener auth-chan)
@@ -565,19 +552,32 @@
 
 ;; Create a User component that communicates with the client over TCP
 ;; Port Port -> Void
-(define (make-user input-port output-port register-chan)
+(define (make-user input-port output-port auth-chan)
   (thread
     (thunk
 
-      (define (handle-auth-comms user-id auth-chan)
-        (define client-msg (channel-get input-evt))
-        (channel-put auth-chan client-msg)
+      (define recv-chan (make-channel))
+      (define input-evt (read-datum-evt input-port))
 
-        (define server-msg (channel-get auth-chan))
-        (match server-msg
-          [(user-logged-in lobby-chan)
-           (write (logged-in) output-port)
-           (handle-lobby-comms user-id auth-chan lobby-chan)]))
+      (define (handle-auth-comms)
+        (define client-msg (channel-get input-evt))
+        (match client-msg
+          [(login id token)
+           (channel-put auth-chan id token recv-chan)
+           (define server-msg (channel-get recv-chan))
+           (match server-msg
+             ;; TODO can fail with invalid password
+             [(user-logged-in lobby-chan)
+              (write (logged-in) output-port)
+              (handle-lobby-comms id auth-chan lobby-chan)])]
+          [(register id)
+           (channel-put auth-chan (user-register id recv-chan))
+           (define server-msg (channel-get recv-chan))
+           (match server-msg
+             ;; TODO can fail with already taken UserID
+             [(user-registered token lobby-chan)
+              (write (registered token) output-port)
+              (handle-lobby-comms id auth-chan lobby-chan)])]))
 
       ;; Ideally, we'd hide unrelated chans
       (define (handle-lobby-comms user-id auth-chan lobby-chan)
@@ -681,7 +681,7 @@
 
 ;; Chan -> Chan
 (define (make-authentication-manager lobby-chan db-chan)
-  (define register-chan (make-channel))
+  (define auth-chan (make-channel))
   (define db-recv-chan (make-channel))
 
   (thread
@@ -693,37 +693,25 @@
         (match db-resp
           [(data d) (or d (hash))]))
 
+      (define (establish-user-session id)
+        (channel-put lobby-chan (create-session id))
+        (define lobby-msg (channel-get lobby-chan))
+        (match lobby-msg
+          [(session-created user-lobby-chan) user-lobby-chan]))
+
       (define initial-tokens (get-initial-tokens))
 
-      (let loop ([user-tokens initial-tokens] ;; [Hash-of UserID UserToken]
-                 [user-comms (hash)]) ;; [Hash-of UserID [Chan-of AuthMsg]]
 
-        ;; Login -> Void
-        (define (handle-login msg)
-          (match msg
-            [(login id token)
-             (log-login id)
-             (when (symbol=? token (hash-ref user-tokens id))
-               (channel-put lobby-chan (create-session id))
-               (define lobby-msg (channel-get lobby-chan))
-               (match lobby-msg
-                 [(session-created user-lobby-chan)
-                  (channel-put (hash-ref user-comms id) (user-logged-in user-lobby-chan))
-                  (loop user-tokens user-comms)]))]))
-
-        (define login-evts
-          (apply choice-evt
-                 (map (λ (chan) (handle-evt chan handle-login))
-                      (hash-values user-comms))))
-
-        (sync
-          login-evts
-          (handle-evt
-            register-chan
-            (match-lambda
-              [(user-register id user-chan)
-               (log-registration id)
-
+      (let loop ([user-tokens initial-tokens]) ;; [Hash-of UserID UserToken]
+        (define auth-msg (channel-get auth-chan))
+        (match auth-msg
+          [(user-login id token reply-chan)
+           (log-login id)
+           (when (symbol=? token (hash-ref user-tokens id))
+             (define user-lobby-chan (establish-user-session id))
+             (channel-put reply-chan (user-logged-in user-lobby-chan))
+             (loop user-tokens))]
+          [(user-register id reply-chan)
                (define user-token (intern-symbol (gensym id)))
                (define new-tokens (hash-set user-tokens id user-token))
                (channel-put db-chan (insert LOGIN-INFO new-tokens db-recv-chan))
@@ -731,10 +719,9 @@
                (define db-msg (channel-get db-recv-chan))
                (match db-msg
                  [(ack)
-                  (define user-auth-chan (make-channel))
-                  (channel-put user-chan (user-registered user-token user-auth-chan))
-                  (loop new-tokens
-                        (hash-set user-comms id user-auth-chan))])]))))))
+                  (define user-lobby-chan (establish-user-session id))
+                  (channel-put (user-registered user-token user-lobby-chan))
+                  (loop new-tokens)])]))))
   register-chan)
 
 ;; Path -> [Chan-of DBMsg]

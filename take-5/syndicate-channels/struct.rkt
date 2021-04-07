@@ -11,6 +11,7 @@
   (struct-out game-over)
   (struct-out register)
   (struct-out registered)
+  (struct-out taken-id)
   (struct-out login)
   (struct-out logout)
   (struct-out logged-in)
@@ -64,6 +65,9 @@
 
 ;; a Registered is a (registered UserToken)
 (struct registered (token) #:prefab)
+
+;; a TakenId is a (taken-id UserId)
+(struct taken-id (contents) #:prefab)
 
 ;; a Login is a (log-in UserID UserToken)
 (struct login (id token) #:prefab)
