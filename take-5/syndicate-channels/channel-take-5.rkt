@@ -613,7 +613,7 @@
             [(logout user-id)
              (channel-put lobby-chan client-msg)
              (write (channel-get lobby-chan) output-port)
-             (handle-auth-comms user-id auth-chan)])))
+             (handle-auth-comms)])))
 
       (define (handle-room-comms user-id auth-chan lobby-chan room-chan)
         (define client-msg (channel-get input-evt))
@@ -666,18 +666,7 @@
            (write dealer-msg output-port)
            (handle-lobby-comms user-id auth-chan lobby-chan)]))
 
-      (define recv-chan (make-channel))
-      (define input-evt (read-datum-evt input-port))
-
-      (define client-msg (channel-get input-evt))
-      (match client-msg
-        [(register user-id)
-         (channel-put register-chan (user-register user-id recv-chan))
-         (define received-msg (channel-get recv-chan))
-         (match received-msg
-           [(user-registered token user-auth-chan)
-            (write (registered token) output-port)
-            (handle-auth-comms user-id user-auth-chan)])]))))
+      (handle-auth-comms))))
 
 ;; Chan -> Chan
 (define (make-authentication-manager lobby-chan db-chan)
@@ -709,20 +698,20 @@
            (log-login id)
            (when (symbol=? token (hash-ref user-tokens id))
              (define user-lobby-chan (establish-user-session id))
-             (channel-put reply-chan (user-logged-in user-lobby-chan))
-             (loop user-tokens))]
+             (channel-put reply-chan (user-logged-in user-lobby-chan)))
+           (loop user-tokens)]
           [(user-register id reply-chan)
-               (define user-token (intern-symbol (gensym id)))
-               (define new-tokens (hash-set user-tokens id user-token))
-               (channel-put db-chan (insert LOGIN-INFO new-tokens db-recv-chan))
+           (define user-token (intern-symbol (gensym id)))
+           (define new-tokens (hash-set user-tokens id user-token))
+           (channel-put db-chan (insert LOGIN-INFO new-tokens db-recv-chan))
 
-               (define db-msg (channel-get db-recv-chan))
-               (match db-msg
-                 [(ack)
-                  (define user-lobby-chan (establish-user-session id))
-                  (channel-put (user-registered user-token user-lobby-chan))
-                  (loop new-tokens)])]))))
-  register-chan)
+           (define db-msg (channel-get db-recv-chan))
+           (match db-msg
+             [(ack)
+              (define user-lobby-chan (establish-user-session id))
+              (channel-put reply-chan (user-registered user-token user-lobby-chan))
+              (loop new-tokens)])]))))
+  auth-chan)
 
 ;; Path -> [Chan-of DBMsg]
 (define (make-database filename)

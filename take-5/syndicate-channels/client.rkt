@@ -94,11 +94,7 @@
   (define registered-msg (read input))
   (define token (registered-token registered-msg))
 
-  ;; Log-in the User
-  (write (login id token) output)
-  (define logged-in-msg (read input))
-  (match logged-in-msg
-    [(logged-in) (printf "Yay! ~a is logged in with token ~a!\n" id token)])
+  (printf "User ~a is registered & logged in with token ~a\n" id token)
 
   ;; Return the token for future use
   token)
