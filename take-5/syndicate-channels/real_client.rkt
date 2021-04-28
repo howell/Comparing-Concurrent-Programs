@@ -48,7 +48,7 @@
                      'signup register-action)
         'lobby (hash 'list list-action)))
 
-#;(define transition-table
+(define transition-table
   (hash 'start
       (hash 'login (user-action "Login to the Server."
                                 (list "What is your id?\n" "What is your password?\n")
