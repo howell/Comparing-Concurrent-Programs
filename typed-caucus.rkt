@@ -74,7 +74,7 @@
      TimeStateDriver))
 
 (define (spawn-candidate [name Name] [tax-rate TaxRate] [threshold Threshold])
-  (spawn CandComms
+  (spawn #:type CandComms
     (lift+define-role candidate-impl
     (start-facet cand
       (printf "Candidate ~a has entered the race!\n" name)
@@ -86,7 +86,7 @@
 
 ;; Name TaxRate Threshold -> Candidate
 (define (spawn-stubborn-candidate [name Name] [tax-rate TaxRate] [threshold Threshold])
-  (spawn (U CandComms (Observe Candidate))
+  (spawn #:type (U CandComms (Observe Candidate))
     (lift+define-role stubborn-candidate-impl
     (start-facet be-stubborn
       (printf "Candidate ~a is going to be stubborn!\n" name)
@@ -124,7 +124,7 @@
                         [name Name]
                         [region Region]
                         [register? Bool])
-  (spawn VoterComms (voter-behavior voting-procedure name region register?)))
+  (spawn #:type VoterComms (voter-behavior voting-procedure name region register?)))
 
 (define (spawn-voter [name Name] [region Region] [rank-candidates (→fn (List Candidate) (List Candidate))])
   (define (voting-procedure [id ID] [region Region] [round-candidates (List Name)] [candidates (Set Candidate)])
@@ -149,7 +149,7 @@
   (voter-skeleton voting-procedure name region #t))
 
 (define (spawn-leaving-voter [name Name] [region Region] [rank-candidates (→fn (List Candidate) (List Candidate))] [round-limit Int])
-  (spawn VoterComms
+  (spawn #:type VoterComms
     (start-facet count-rounds
       (field [round-count : Int 0])
 
@@ -165,7 +165,7 @@
 
 ;; Name [[Listof Candidate] -> [Listof Candidate]] Number -> Voter
 (define (spawn-late-joining-voter [name Name] [region Region] [rank-candidates (→fn (List Candidate) (List Candidate))] [round-limit Int])
-  (spawn VoterComms
+  (spawn #:type VoterComms
     (start-facet count-rounds
       (field [round-count : Int 0]
              [registered? : Bool #f])
@@ -200,7 +200,7 @@
 
 ;; Region -> Leader
 (define (spawn-leader [region Region])
-  (spawn LeaderComms
+  (spawn #:type LeaderComms
     (lift+define-role leader-impl
     (start-facet vote-leader
       (printf "The Vote Leader for region ~a has joined the event!\n" region)
@@ -315,7 +315,7 @@
 
 ;; -> Manager
 (define (spawn-manager [regions (List Region)])
-  (spawn ManagerComms
+  (spawn #:type ManagerComms
     (lift+define-role manager-impl
     (start-facet manager
       (field [caucus-results (Hash Name Int) (hash)])
@@ -351,7 +351,7 @@
 
 (define (startup)
   ;; this is a dumb hack to make up for typed-syndicate not doing capture-actor-actions
-  (spawn τc
+  (spawn #:type τc
    (start-facet boot
      (on start
          ;; Region Manager
@@ -472,13 +472,29 @@
                       (timestate:activate!)
                       (startup)))
 
+(define-constructor* (reset-timer))
+(define (timer-mock)
+  (spawn
+    (start-facet TimerMock
+      (define (once)
+        (start-facet one
+            (on (asserted (observe (later-than $t:Int)))
+                (start-facet ans
+                  (assert (later-than t))
+                  (on (asserted (later-than t))
+                      (stop one)
+                      (send! (reset-timer)))))))
+      (on start (once))
+      (on (message (reset-timer))
+          (once)))))
+
 (module+ test
   #;(verify-actors TT manager-impl)
-  (define-type-alias TimerMock
+  #;(define-type-alias TimerMock
     (Role (timer-driver)
           (During (Observe (LaterThanT Int))
                   (Shares (LaterThanT Int)))))
-  (check-deadlock-free manager-impl
+  (check-deadlock-free* manager-impl
                        voter-impl
                        candidate-impl
                        TimerMock)
